@@ -1,2 +1,5 @@
 finewiki_en
 *.pyc
+index_data
+.ruff_cache
+.venv

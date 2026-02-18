@@ -74,10 +74,10 @@ class FineWikiSearcher:
 
         for pf in parquet_files:
             table = pf.read().to_pandas()
-            if doc_id in table["id"].values:
-                row = table[table["id"] == doc_id].iloc[0]
+            if doc_id in table["page_id"].values:
+                row = table[table["page_id"] == doc_id].iloc[0]
                 return {
-                    "id": int(row["id"]),
+                    "id": int(row["page_id"]),
                     "title": str(row.get("title", "")),
                     "content": str(row.get("text", "")),
                     "url": str(row.get("url", "")),
