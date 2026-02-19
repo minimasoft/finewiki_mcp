@@ -3,12 +3,12 @@ set -euo pipefail
 
 # FineWiki MCP Runner Script
 # Usage: ./run_finewiki.sh [mode] [options]
-# Modes: index, server
+# Modes: index, server, test
 
 IMAGE_NAME="finewiki-mcp"
 CONTAINER_NAME="finewiki-mcp"
 
-# Directories
+# Directories (defaults)
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INDEX_DIR="${PROJECT_DIR}/index_data"
 PARQUET_DIR=$(realpath "${PROJECT_DIR}/finewiki_en")
@@ -18,14 +18,17 @@ MODE="${1:-}"
 shift || true
 
 # Validate mode
-if [[ "$MODE" != "index" && "$MODE" != "server" ]]; then
-    echo "Usage: $0 [index|server] [options]"
+if [[ "$MODE" != "index" && "$MODE" != "server" && "$MODE" != "test" ]]; then
+    echo "Usage: $0 [index|server|test] [options]"
     echo ""
     echo "Modes:"
     echo "  index   Build the Tantivy index from parquet files"
     echo "          Options: --parquet-dir <dir> --index-dir <dir>"
     echo ""
     echo "  server  Run the MCP server"
+    echo "          Options: --index-dir <dir> --parquet-dir <dir>"
+    echo ""
+    echo "  test    Run a quick test (search for 'Banana' in titles and 'Mozart' in content)"
     echo "          Options: --index-dir <dir> --parquet-dir <dir>"
     echo ""
     exit 1
@@ -140,6 +143,57 @@ run_server() {
         --parquet-dir "/host_project/$(basename "$parquet_dir")"
 }
 
+# Function to run in test mode
+run_test() {
+    local index_dir="$INDEX_DIR"
+    local parquet_dir="$PARQUET_DIR"
+
+    # Parse remaining arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --index-dir)
+                index_dir="$2"
+                shift 2
+                ;;
+            --parquet-dir)
+                parquet_dir="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Check if index exists
+    if [[ ! -d "$index_dir" ]]; then
+        echo "Error: Index directory not found: $index_dir"
+        echo "Run 'index' mode first to build the index."
+        exit 1
+    fi
+
+    # Check if parquet files exist
+    if [[ ! -d "$parquet_dir" ]]; then
+        echo "Warning: Parquet directory not found: $parquet_dir"
+        echo "Test may fail if it cannot find parquet files for content fetching."
+    fi
+
+    echo "Running test mode..."
+    echo "  Index dir:   $index_dir"
+    echo "  Parquet dir: $parquet_dir"
+
+    docker run --rm \
+        -v "$PROJECT_DIR:/host_project" \
+        -w /app \
+        --entrypoint="" \
+        "$IMAGE_NAME" \
+        /app/.venv/bin/python src/finewiki_mcp/server.py \
+        --index-dir "/host_project/$(basename "$index_dir")" \
+        --parquet-dir "/host_project/$(basename "$parquet_dir")" \
+        --mode test
+}
+
 build_image
 
 # Main logic
@@ -149,5 +203,8 @@ case "$MODE" in
         ;;
     server)
         run_server "$@"
+        ;;
+    test)
+        run_test "$@"
         ;;
 esac
