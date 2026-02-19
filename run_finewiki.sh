@@ -79,14 +79,15 @@ run_index() {
 
     # Get the resolved path for parquet directory (handles symlinks)
     local resolved_parquet=$(realpath "$parquet_dir")
-    
-    docker run --rm \
+
+    docker run --rm -t \
         -v "$PROJECT_DIR:/host_project" \
         -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
         --entrypoint="" \
+        -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
-        /app/.venv/bin/python src/finewiki_mcp/indexer.py \
+        /app/.venv/bin/python -u src/finewiki_mcp/indexer.py \
         --parquet-dir "/parquet_data/$(basename "$resolved_parquet")" \
         --index-dir "/host_project/$(basename "$index_dir")"
 }
@@ -131,14 +132,15 @@ run_server() {
     echo "  Index dir:   $index_dir"
     echo "  Parquet dir: $parquet_dir"
 
-    docker run --rm \
+    docker run --rm -t \
         -v "$PROJECT_DIR:/host_project" \
         -w /app \
         --publish 9000:9000 \
         --name "$CONTAINER_NAME" \
         --entrypoint="" \
+        -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
-        /app/.venv/bin/python src/finewiki_mcp/server.py \
+        /app/.venv/bin/python -u src/finewiki_mcp/server.py \
         --index-dir "/host_project/$(basename "$index_dir")" \
         --parquet-dir "/host_project/$(basename "$parquet_dir")"
 }
@@ -183,12 +185,13 @@ run_test() {
     echo "  Index dir:   $index_dir"
     echo "  Parquet dir: $parquet_dir"
 
-    docker run --rm \
+    docker run --rm -t \
         -v "$PROJECT_DIR:/host_project" \
         -w /app \
         --entrypoint="" \
+        -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
-        /app/.venv/bin/python src/finewiki_mcp/server.py \
+        /app/.venv/bin/python -u src/finewiki_mcp/server.py \
         --index-dir "/host_project/$(basename "$index_dir")" \
         --parquet-dir "/host_project/$(basename "$parquet_dir")" \
         --mode test

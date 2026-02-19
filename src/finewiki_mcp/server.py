@@ -43,8 +43,7 @@ class FineWikiSearcher:
         self, query: str, limit: int = 10
     ) -> list[dict]:
         """Search documents by title."""
-        parser = self.index.parser(["title"])
-        parsed_query = parser.parse(query)
+        parsed_query = self.index.parse_query(query, ["title"])
 
         searcher = self.index.searcher()
         results = searcher.search(parsed_query, limit=limit)
@@ -65,8 +64,7 @@ class FineWikiSearcher:
         self, query: str, limit: int = 10
     ) -> list[dict]:
         """Search documents by full content."""
-        parser = self.index.parser(["content"])
-        parsed_query = parser.parse(query)
+        parsed_query = self.index.parse_query(query, ["content"])
 
         searcher = self.index.searcher()
         results = searcher.search(parsed_query, limit=limit)
@@ -214,6 +212,39 @@ def create_app():
     return server, initialize_searcher
 
 
+
+def run_test(index_dir: str, parquet_dir: str) -> None:
+    """Run a quick test mode: load index and search for 'Banana' in titles and 'Mozart' in content."""
+    print(f"Test Mode - Loading index from {index_dir}...")
+    
+    start_time = time.time()
+    searcher = FineWikiSearcher(index_dir=index_dir, parquet_dir=parquet_dir)
+    load_time = time.time() - start_time
+    print(f"  Index loaded in {load_time:.3f}s")
+    
+    # Search for 'Banana' in titles
+    print("\nSearching for 'Banana' in titles...")
+    start_time = time.time()
+    title_results = searcher.search_by_title("Banana", limit=5)
+    query_time = time.time() - start_time
+    print(f"  Query completed in {query_time:.3f}s")
+    print(f"  Found {len(title_results)} results:")
+    for r in title_results:
+        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
+    
+    # Search for 'Mozart' in content
+    print("\nSearching for 'Mozart' in content...")
+    start_time = time.time()
+    content_results = searcher.search_by_content("Mozart", limit=5)
+    query_time = time.time() - start_time
+    print(f"  Query completed in {query_time:.3f}s")
+    print(f"  Found {len(content_results)} results:")
+    for r in content_results:
+        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
+    
+    print("\nTest completed successfully!")
+
+
 if __name__ == "__main__":
     import argparse
     import anyio
@@ -263,35 +294,3 @@ if __name__ == "__main__":
                 )
 
         anyio.run(main)
-
-
-def run_test(index_dir: str, parquet_dir: str) -> None:
-    """Run a quick test mode: load index and search for 'Banana' in titles and 'Mozart' in content."""
-    print(f"Test Mode - Loading index from {index_dir}...")
-    
-    start_time = time.time()
-    searcher = FineWikiSearcher(index_dir=index_dir, parquet_dir=parquet_dir)
-    load_time = time.time() - start_time
-    print(f"  Index loaded in {load_time:.3f}s")
-    
-    # Search for 'Banana' in titles
-    print("\nSearching for 'Banana' in titles...")
-    start_time = time.time()
-    title_results = searcher.search_by_title("Banana", limit=5)
-    query_time = time.time() - start_time
-    print(f"  Query completed in {query_time:.3f}s")
-    print(f"  Found {len(title_results)} results:")
-    for r in title_results:
-        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
-    
-    # Search for 'Mozart' in content
-    print("\nSearching for 'Mozart' in content...")
-    start_time = time.time()
-    content_results = searcher.search_by_content("Mozart", limit=5)
-    query_time = time.time() - start_time
-    print(f"  Query completed in {query_time:.3f}s")
-    print(f"  Found {len(content_results)} results:")
-    for r in content_results:
-        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
-    
-    print("\nTest completed successfully!")
