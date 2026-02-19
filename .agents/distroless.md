@@ -121,7 +121,7 @@ ENV UV_PYTHON_INSTALL_DIR=/python
 # Only use the managed Python version
 ENV UV_PYTHON_PREFERENCE=only-managed
 
-# Install Python before the project for caching
+# Install Python before the project for caching (pick your version, 3.12 is a exmaple or check .python-version)
 RUN uv python install 3.12
 
 WORKDIR /app
@@ -146,6 +146,6 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Run the FastAPI application by default
+# Run the FastAPI application by default or python or any command that gets installed in the venv
 CMD ["fastapi", "run", "--host", "0.0.0.0", "/app/.venv/lib/python3.12/site-packages/uv_docker_example"]
 ```

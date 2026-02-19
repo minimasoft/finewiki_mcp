@@ -1,19 +1,22 @@
-# Build stage - using uv with managed Python 3.12
+# Build stage - using uv for dependency management
 FROM ghcr.io/astral-sh/uv:bookworm-slim AS builder
-
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+# Configure the Python directory so it is consistent
 ENV UV_PYTHON_INSTALL_DIR=/python
+
+# Only use the managed Python version
 ENV UV_PYTHON_PREFERENCE=only-managed
 
-# Install Python before the project for caching
-RUN uv python install 3.12
+# Install Python 3.14 (matches .python-version)
+RUN uv python install 3.14
 
 WORKDIR /app
 
-# Copy lock file and pyproject.toml first for caching
-COPY uv.lock pyproject.toml ./
+# Copy dependency files first for better caching
+COPY pyproject.toml uv.lock* ./
 
-# Sync dependencies (without installing project)
+# Sync dependencies without installing the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev --no-editable
 
@@ -21,21 +24,40 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src/ ./src/
 COPY main.py ./
 
-# Full sync to install the project itself
+# Create the virtual environment and install the project
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
-# Runtime stage - distroless Python3 base (Debian 12)
-FROM gcr.io/distroless/python3-debian12
+# Runtime stage - Debian 12 slim with Python and standard libraries
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Copy source code
+# Install required runtime dependencies (zlib, etc. for numpy/pyarrow)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the managed Python from builder
+COPY --from=builder /python/cpython-3.14.3-linux-x86_64-gnu /usr/local/python
+
+# Create symlink for system python to use our managed version
+RUN ln -sf /usr/local/python/bin/python3.14 /usr/local/bin/python && \
+    ln -sf /usr/local/python/bin/pip3.14 /usr/local/bin/pip
+
+# Copy the virtual environment from builder (includes all dependencies)
+COPY --from=builder /app/.venv /app/.venv
+
+# Create a symlink for venv python pointing to managed Python
+RUN ln -sf /usr/local/python/bin/python3.14 /app/.venv/bin/python
+
+# Copy application source
 COPY src/ ./src/
 COPY main.py ./
 
-# Copy the venv site-packages from builder to runtime's site-packages location
-COPY --from=builder /app/.venv/lib/python*/site-packages/* /usr/local/lib/python3.11/site-packages/
+# Set PATH to use our managed Python first
+ENV PATH="/usr/local/python/bin:/app/.venv/bin:$PATH"
 
-# Default entrypoint - distroless uses python3 as entrypoint
-ENTRYPOINT ["/usr/bin/python3"]
+# Override the default entrypoint with python from venv
+ENTRYPOINT ["/app/.venv/bin/python"]
+CMD ["src/finewiki_mcp/server.py", "--index-dir", "index_data", "--parquet-dir", "finewiki_en"]

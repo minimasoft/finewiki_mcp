@@ -4,8 +4,6 @@ import hashlib
 import json
 import os
 import shutil
-import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -45,7 +43,7 @@ def save_metadata(index_dir: Path, metadata: dict) -> None:
 def acquire_lock(lock_path: Path):
     """Context manager for acquiring a lock file. Raises if already locked."""
     pid = os.getpid()
-    
+
     if lock_path.exists():
         try:
             existing_pid = int(lock_path.read_text().strip())
@@ -57,7 +55,7 @@ def acquire_lock(lock_path: Path):
                 )
         except ValueError:
             pass  # Lock file exists but contains invalid content
-    
+
     try:
         lock_path.write_text(str(pid))
         yield
@@ -119,21 +117,25 @@ def get_temp_index_dir(index_dir: Path) -> Path:
 def temp_index_directory(index_dir: Path):
     """Context manager for managing a temporary index directory with cleanup on failure."""
     temp_dir = get_temp_index_dir(index_dir)
-    
+
     # Remove any existing temp directory from previous incomplete runs
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
-    
+
     # Create fresh temp directory
     temp_dir.mkdir(parents=True, exist_ok=True)
-    
+
     try:
         yield temp_dir
     except Exception as e:
         # Cleanup on failure
-        print(f"\nIndexing failed! Cleaning up temporary files...")
+        print(f"\nIndexing failed! Cleaning up temporary files... {e}")
         if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                print("Error cleaning up")
+                pass
         raise e
 
 
@@ -141,7 +143,7 @@ def build_index(
     parquet_dir: Path, index_dir: Path = Path("index_data"), force_rebuild: bool = False
 ) -> tuple[int, int]:
     """Build the full index from parquet files. Returns (total_docs, total_files).
-    
+
     Args:
         parquet_dir: Directory containing parquet files
         index_dir: Output directory for index
@@ -150,9 +152,9 @@ def build_index(
     # Ensure parquet directory exists
     if not parquet_dir.exists():
         raise FileNotFoundError(f"Parquet directory not found: {parquet_dir}")
-    
+
     parquet_files = load_parquet_files(parquet_dir)
-    
+
     if not parquet_files:
         print(f"No parquet files found in {parquet_dir}")
         return 0, 0
@@ -160,13 +162,13 @@ def build_index(
     # Load existing metadata
     metadata = load_metadata(index_dir)
     index_file_hash_map = metadata.get("indexed_files", {})
-    
+
     # Determine which files need indexing
     files_to_index = []
     for parquet_file in parquet_files:
         file_hash = compute_file_hash(parquet_file)
-        
-        if force_rebuild or not parquet_file.name in index_file_hash_map:
+
+        if force_rebuild or parquet_file.name not in index_file_hash_map:
             # File not indexed yet, or force rebuild
             files_to_index.append((parquet_file, file_hash))
         elif index_file_hash_map[parquet_file.name] != file_hash:
@@ -176,11 +178,11 @@ def build_index(
         else:
             # File already indexed with same content
             print(f"Skipping {parquet_file.name} (already indexed)")
-    
+
     if not files_to_index:
         total_docs = sum(
-            index_file_hash_map.get(pf.name, {}).get("docs", 0) 
-            for pf in parquet_files 
+            index_file_hash_map.get(pf.name, {}).get("docs", 0)
+            for pf in parquet_files
             if pf.name in index_file_hash_map
         )
         # Re-read to get actual doc count since we're using cached metadata
@@ -188,29 +190,25 @@ def build_index(
         for parquet_file in parquet_files:
             reader = pq.ParquetFile(parquet_file)
             total_docs += reader.metadata.num_rows
-        
+
         return total_docs, len(parquet_files)
 
     lock_path = index_dir / ".indexer.lock"
-    
+
     with acquire_lock(lock_path):
         with temp_index_directory(index_dir) as temp_dir:
             # Create index in temporary directory
             print(f"Creating temporary index at {temp_dir}...")
             index = create_index(temp_dir)
-            
+
             total_docs = 0
             for parquet_file, file_hash in files_to_index:
                 print(f"Indexing {parquet_file.name}...")
                 docs_in_file = index_parquet_file(index, parquet_file)
                 total_docs += docs_in_file
                 print(f"  Indexed {docs_in_file} documents")
-            
-            # Optimize the index BEFORE saving metadata
-            print("Optimizing index...")
-            index.optimize()
-            
-            # Now that optimization is complete and index is finalized,
+
+            # Now that indexing is complete and index is finalized,
             # we can safely update the metadata with file hashes
             for parquet_file, file_hash in files_to_index:
                 reader = pq.ParquetFile(parquet_file)
@@ -220,24 +218,48 @@ def build_index(
                     "docs": num_rows,
                     "indexed_at": str(Path(temp_dir).name)  # Reference to temp dir name for debugging
                 }
-            
+
             # Save metadata before moving (so we can recover if move fails)
             save_metadata(index_dir, {"indexed_files": index_file_hash_map, "version": 1})
-            
+
             # Atomically replace the old index with the new one
             actual_index_files = [p for p in temp_dir.iterdir() if p.name != ".index_tmp"]
-            
+
             print("Moving final index to target directory...")
-            # Remove existing index files but keep metadata and lock
+            # First, move temp directory contents to a staging directory
+            staging_dir = index_dir / ".index_staging"
             preserve_files = {METADATA_FILE, ".indexer.lock"}
-            for item in index_dir.iterdir():
-                if item.name not in preserve_files and item.is_dir():
-                    shutil.rmtree(item)
-                elif item.name not in preserve_files:
-                    item.unlink()
-            
-            # Move temp directory contents to final location
+
+            # Clean up any existing staging dir from previous incomplete operations
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir)
+            staging_dir.mkdir(parents=True, exist_ok=True)
+
+            # Move temp directory contents to staging area first
             for item in temp_dir.iterdir():
+                dest = staging_dir / item.name
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                shutil.move(str(item), str(dest))
+
+            # Now that staging is complete, remove old index files but keep metadata and lock
+            for item in index_dir.iterdir():
+                if item.name not in preserve_files and item.name != ".index_staging" and item.is_dir():
+                    shutil.rmtree(item)
+                elif item.name not in preserve_files and item.name != ".index_staging":
+                    item.unlink()
+
+            # Finally, rename staging directory to final location (atomic on same filesystem)
+            staging_final = index_dir / ".index_tmp"
+            if staging_final.exists():
+                shutil.rmtree(staging_final)
+            staging_dir.rename(index_dir / ".index_tmp")
+
+            # Move the .index_tmp contents back to replace the actual index
+            for item in (index_dir / ".index_tmp").iterdir():
                 dest = index_dir / item.name
                 if dest.exists():
                     if dest.is_dir():
@@ -245,7 +267,10 @@ def build_index(
                     else:
                         dest.unlink()
                 shutil.move(str(item), str(dest))
-    
+
+            # Clean up the now-empty .index_tmp directory
+            (index_dir / ".index_tmp").rmdir()
+
     print(f"Indexing complete! Indexed {total_docs} documents across {len(files_to_index)} files.")
     return total_docs, len(parquet_files)
 
@@ -274,8 +299,7 @@ if __name__ == "__main__":
 
     print(f"Building index from {args.parquet_dir}...")
     total_docs, total_files = build_index(
-        Path(args.parquet_dir), 
+        Path(args.parquet_dir),
         Path(args.index_dir),
-        force_rebuild=args.force_rebuild
     )
     print(f"Indexing complete! Indexed {total_docs} documents across {total_files} files.")

@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Virtual environments
+.venv
+__pycache__
+*.pyc
+
+# Cache directories
+.ruff_cache
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Test and coverage
+.pytest_cache
+.coverage
+htmlcov

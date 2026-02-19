@@ -11,7 +11,7 @@ CONTAINER_NAME="finewiki-mcp"
 # Directories
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INDEX_DIR="${PROJECT_DIR}/index_data"
-PARQUET_DIR="${PROJECT_DIR}/finewiki_en"
+PARQUET_DIR=$(realpath "${PROJECT_DIR}/finewiki_en")
 
 # Parse arguments
 MODE="${1:-}"
@@ -74,13 +74,18 @@ run_index() {
     echo "  Parquet dir: $parquet_dir"
     echo "  Index dir:   $index_dir"
 
+    # Get the resolved path for parquet directory (handles symlinks)
+    local resolved_parquet=$(realpath "$parquet_dir")
+    
     docker run --rm \
-        -v "$PROJECT_DIR:/app" \
+        -v "$PROJECT_DIR:/host_project" \
+        -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
+        --entrypoint="" \
         "$IMAGE_NAME" \
-        src/finewiki_mcp/indexer.py \
-        --parquet-dir "$(basename "$parquet_dir")" \
-        --index-dir "$(basename "$index_dir")"
+        /app/.venv/bin/python src/finewiki_mcp/indexer.py \
+        --parquet-dir "/parquet_data/$(basename "$resolved_parquet")" \
+        --index-dir "/host_project/$(basename "$index_dir")"
 }
 
 # Function to run in server mode
@@ -124,15 +129,18 @@ run_server() {
     echo "  Parquet dir: $parquet_dir"
 
     docker run --rm \
-        -v "$PROJECT_DIR:/app" \
+        -v "$PROJECT_DIR:/host_project" \
         -w /app \
         --publish 9000:9000 \
         --name "$CONTAINER_NAME" \
+        --entrypoint="" \
         "$IMAGE_NAME" \
-        src/finewiki_mcp/server.py \
-        --index-dir "$(basename "$index_dir")" \
-        --parquet-dir "$(basename "$parquet_dir")"
+        /app/.venv/bin/python src/finewiki_mcp/server.py \
+        --index-dir "/host_project/$(basename "$index_dir")" \
+        --parquet-dir "/host_project/$(basename "$parquet_dir")"
 }
+
+build_image
 
 # Main logic
 case "$MODE" in
