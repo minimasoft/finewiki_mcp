@@ -132,7 +132,7 @@ run_server() {
     echo "  Index dir:   $index_dir"
     echo "  Parquet dir: $parquet_dir"
 
-    docker run --rm -t \
+    docker run --rm -it \
         -v "$PROJECT_DIR:/host_project" \
         -w /app \
         --publish 9000:9000 \

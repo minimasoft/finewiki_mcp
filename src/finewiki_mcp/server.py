@@ -27,7 +27,7 @@ class FineWikiSearcher:
         if (self.index_path / "segments").exists():
             self.index = tantivy.Index.open(self.index_path)
         else:
-            self.index = tantivy.Index(get_schema(), path=str(self.index_path))
+            self.index = tantivy.Index(get_schema(), path=str(self.index_path / '.index'))
         self.reader = self.index.searcher()
         self._parquet_files: list[pq.ParquetFile] | None = None
 
