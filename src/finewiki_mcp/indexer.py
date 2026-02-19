@@ -28,7 +28,9 @@ def load_metadata(index_dir: Path) -> dict:
     metadata_path = index_dir / METADATA_FILE
     if metadata_path.exists():
         with open(metadata_path, "r") as f:
-            return json.load(f)
+            result = json.load(f)
+            print(f"Loaded metadata: {result}")
+            return result
     return {"indexed_files": {}, "version": 1}
 
 
@@ -37,6 +39,7 @@ def save_metadata(index_dir: Path, metadata: dict) -> None:
     metadata_path = index_dir / METADATA_FILE
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
+    print(f"Saved metadata to {metadata_path}")
 
 
 @contextmanager
@@ -170,14 +173,20 @@ def build_index(
 
         if force_rebuild or parquet_file.name not in index_file_hash_map:
             # File not indexed yet, or force rebuild
-            files_to_index.append((parquet_file, file_hash))
-        elif index_file_hash_map[parquet_file.name] != file_hash:
-            # File hash changed, needs re-indexing
-            print(f"Detected change in {parquet_file.name}, re-indexing...")
+            print(f"New file {parquet_file.name} (hash: {file_hash[:16]}...), indexing...")
             files_to_index.append((parquet_file, file_hash))
         else:
-            # File already indexed with same content
-            print(f"Skipping {parquet_file.name} (already indexed)")
+            # Check if hash matches - compare only the "hash" field from stored metadata
+            stored_entry = index_file_hash_map.get(parquet_file.name, {})
+            stored_hash = stored_entry.get("hash") if isinstance(stored_entry, dict) else None
+            print(f"Checking {parquet_file.name}: computed={file_hash[:16]}..., stored={stored_hash[:16] if stored_hash else 'N/A'}...")
+            if index_file_hash_map[parquet_file.name].get("hash") != file_hash:
+                # File hash changed, needs re-indexing
+                print(f"Detected change in {parquet_file.name}, re-indexing...")
+                files_to_index.append((parquet_file, file_hash))
+            else:
+                # File already indexed with same content
+                print(f"Skipping {parquet_file.name} (already indexed)")
 
     if not files_to_index:
         total_docs = sum(
@@ -213,6 +222,8 @@ def build_index(
             for parquet_file, file_hash in files_to_index:
                 reader = pq.ParquetFile(parquet_file)
                 num_rows = reader.metadata.num_rows
+                stored_entry = index_file_hash_map.get(parquet_file.name, {})
+                print(f"Updating metadata for {parquet_file.name}: hash={file_hash[:16]}..., docs={num_rows}, previously_indexed_at={stored_entry.get('indexed_at', 'N/A')}")
                 index_file_hash_map[parquet_file.name] = {
                     "hash": file_hash,
                     "docs": num_rows,
@@ -222,54 +233,35 @@ def build_index(
             # Save metadata before moving (so we can recover if move fails)
             save_metadata(index_dir, {"indexed_files": index_file_hash_map, "version": 1})
 
-            # Atomically replace the old index with the new one
+            # Atomically replace the old index with the new one using rename (atomic on same FS)
             actual_index_files = [p for p in temp_dir.iterdir() if p.name != ".index_tmp"]
 
             print("Moving final index to target directory...")
-            # First, move temp directory contents to a staging directory
-            staging_dir = index_dir / ".index_staging"
-            preserve_files = {METADATA_FILE, ".indexer.lock"}
+            # Use a stable name for the new index directory
+            new_index_name = f".index_new_{os.getpid()}"
+            new_index_dir = index_dir / new_index_name
 
-            # Clean up any existing staging dir from previous incomplete operations
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir)
-            staging_dir.mkdir(parents=True, exist_ok=True)
+            # Clean up any existing .index_new_* from previous incomplete operations
+            for item in index_dir.iterdir():
+                if item.name.startswith(".index_new_"):
+                    shutil.rmtree(item)
 
-            # Move temp directory contents to staging area first
-            for item in temp_dir.iterdir():
-                dest = staging_dir / item.name
-                if dest.exists():
-                    if dest.is_dir():
-                        shutil.rmtree(dest)
-                    else:
-                        dest.unlink()
-                shutil.move(str(item), str(dest))
+            # Move temp directory contents to a stable-named new index location
+            temp_dir.rename(new_index_dir)
 
             # Now that staging is complete, remove old index files but keep metadata and lock
+            preserve_files = {METADATA_FILE, ".indexer.lock"}
             for item in index_dir.iterdir():
-                if item.name not in preserve_files and item.name != ".index_staging" and item.is_dir():
+                if item.name not in preserve_files and not item.name.startswith(".index_new_") and item.is_dir():
                     shutil.rmtree(item)
-                elif item.name not in preserve_files and item.name != ".index_staging":
+                elif item.name not in preserve_files and not item.name.startswith(".index_new_"):
                     item.unlink()
 
-            # Finally, rename staging directory to final location (atomic on same filesystem)
-            staging_final = index_dir / ".index_tmp"
-            if staging_final.exists():
-                shutil.rmtree(staging_final)
-            staging_dir.rename(index_dir / ".index_tmp")
-
-            # Move the .index_tmp contents back to replace the actual index
-            for item in (index_dir / ".index_tmp").iterdir():
-                dest = index_dir / item.name
-                if dest.exists():
-                    if dest.is_dir():
-                        shutil.rmtree(dest)
-                    else:
-                        dest.unlink()
-                shutil.move(str(item), str(dest))
-
-            # Clean up the now-empty .index_tmp directory
-            (index_dir / ".index_tmp").rmdir()
+            # Finally, rename new_index to the standard index name (atomic on same filesystem)
+            final_index_name = ".index"
+            if (index_dir / final_index_name).exists():
+                shutil.rmtree(index_dir / final_index_name)
+            new_index_dir.rename(index_dir / final_index_name)
 
     print(f"Indexing complete! Indexed {total_docs} documents across {len(files_to_index)} files.")
     return total_docs, len(parquet_files)
