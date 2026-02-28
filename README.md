@@ -1,95 +1,110 @@
-# FineWiki MCP Server
+# 🌊 FineWiki MCP Server
 
-A Model Context Protocol (MCP) server that provides search and content retrieval capabilities for the FineWiki English dataset using Tantivy indexing.
+A **Model Context Protocol (MCP)** server that provides search and content retrieval for the FineWiki English dataset. 📚
 
-## Overview
+**No API keys. No rate limits. No trackers. Just pure offline AI context! 💪**
 
-This project implements an MCP server that:
-- Indexes the FineWiki English dataset from parquet files using [Tantivy](https://github.com/quickwit-oss/tantivy)
-- Provides search by title
-- Provides search by full content
-- Fetches complete document content directly from parquet files
+> **Key Features:**
+> - 🔍 Fast full-text search across multi-gigabyte datasets
+> - 🐳 Runs in Docker (no local dependencies needed)
+> - ⚡ Uses Tantivy for lightning-fast indexing and search
+> - 📦 Works with Parquet files for efficient columnar storage
 
-## Installation
+---
+
+## 🎯 What is This?
+
+This is a **sample project** demonstrating how to integrate large datasets as MCP tools — giving you unlimited offline context for your AI applications without any tracking, keys, or restrictions!
+
+Think of it as your own personal Wikipedia API that runs entirely on your machine. 🏠
+
+---
+
+## 📥 Quick Start: Download Parquet Files
+
+The FineWiki English dataset is stored in Parquet format. Here's how to get it:
+
+### ✅ Best Method: Using `aria2c` (parallel + resumable)
 
 ```bash
-# Clone and navigate to the project
-cd finewiki_mcp
-
-# Install dependencies
-uv sync
+./links.sh
 ```
 
-## Prerequisites
+This downloads all parquet files using aria2 for maximum speed ⚡
 
-You need the FineWiki English dataset in parquet format. Download it from HuggingFace:
+> **Install aria2:**
+> ```bash
+> # Ubuntu/Debian
+> sudo apt install aria2
+> 
+> # macOS
+> brew install aria2
+> ```
 
-```bash
-# Option 1: Download specific partition(s)
-wget https://huggingface.co/datasets/HuggingFaceFW/finewiki/resolve/main/partitions/english/0000.parquet -O finewiki_en/0000.parquet
+> **Note:** The `links.sh` script is in the project root and downloads files to `finewiki_en/`.
 
-# Option 2: Use huggingface-cli
-pip install huggingface_hub
-huggingface-cli download HuggingFaceFW/finewiki --repo-type dataset --include "*/ partitions/english/*.parquet" --local-dir finewiki_en
-```
+---
 
-The parquet files should be placed in the `finewiki_en` directory (or specify a different path with `--parquet-dir`).
+## 🐳 Docker Setup (Recommended)
 
-## Usage
+This project runs entirely inside Docker — no Python installation required!
 
-### 1. Build the Index
+### Step 1: Build the Index
 
 First, build the Tantivy index from your parquet files:
 
 ```bash
-uv run python -m finewiki_mcp.indexer --parquet-dir finewiki_en --index-dir index_data
+./run_finewiki.sh index
 ```
 
-Options:
-- `--parquet-dir`: Directory containing parquet files (default: `finewiki_en`)
-- `--index-dir`: Output directory for the index (default: `index_data`)
+This will:
+- Build the Docker image (once)
+- Scan all `.parquet` files in `finewiki_en/`
+- Create the search index in `index_data/`
 
-### 2. Run the MCP Server
-
-Start the server:
+### Step 2: Start the MCP Server
 
 ```bash
-uv run python -m finewiki_mcp.server --index-dir index_data --parquet-dir finewiki_en
+./run_finewiki.sh server
 ```
 
-The server runs over stdio and can be integrated with any MCP-compatible client.
+The server is now running and ready to accept MCP connections!
 
-### 3. Available Tools
+---
 
-The MCP server exposes three tools:
+## 🤖 Integrating with MCP Clients
 
-#### `search_by_title`
-Search for documents by title.
+Here's a sample configuration for your MCP client (`claude_desktop_config.json` or similar):
 
-**Parameters:**
-- `query` (string, required): Search query for titles
-- `limit` (integer, optional): Maximum number of results (default: 10)
+```json
+{
+  "finewiki": {
+    "command": "bash",
+    "args": [
+      "/path/to/finewiki_mcp/run_finewiki.sh",
+      "server"
+    ]
+  }
+}
+```
 
-**Returns:** List of matching documents with id, title, url, and score.
+> **Note:** Replace `/path/to/` with the actual path where you cloned this repository.
 
-#### `search_by_content`
-Search for documents by full content.
+---
 
-**Parameters:**
-- `query` (string, required): Search query for content
-- `limit` (integer, optional): Maximum number of results (default: 10)
+## 🧰 Available Tools
 
-**Returns:** List of matching documents with id, title, url, and score.
+The MCP server exposes three powerful tools:
 
-#### `fetch_content`
-Fetch the full content of a document by its ID.
+| Tool | Description |
+|------|-------------|
+| `search_by_title` | Search for documents by title (fast!) |
+| `search_by_content` | Full-text search across all content |
+| `fetch_content` | Get the complete document by ID |
 
-**Parameters:**
-- `doc_id` (integer, required): Document ID to fetch
+---
 
-**Returns:** Object containing id, title, content, and url.
-
-## Project Structure
+## 🏗️ Project Structure
 
 ```
 finewiki_mcp/
@@ -97,33 +112,64 @@ finewiki_mcp/
 │   ├── __init__.py       # Package initialization
 │   ├── indexer.py        # Index generation script
 │   └── server.py         # MCP server implementation
-├── index_data/           # Tantivy index storage (created by indexer)
-├── finewiki_en/          # Parquet files directory
+├── index_data/           # Tantivy index storage (created by indexer) 🗂️
+├── finewiki_en/          # Parquet files directory 📦
+├── run_finewiki.sh       # Docker runner script ⚙️
 ├── pyproject.toml        # Project dependencies
 └── README.md
 ```
 
-## Architecture
+---
 
-- **Indexing**: Uses [Tantivy](https://github.com/quickwit-oss/tantivy) for fast full-text search
-- **Storage**: Index stores id, title, and url; content is stored in parquet files to avoid duplication
-- **Search**: Query parsing using Tantivy's query parser
-- **Fetching**: Direct access to parquet files using PyArrow for efficient columnar reading
+## 🔧 How It Works
 
-## Configuration
+1. **Indexing** 📝  
+   Uses [Tantivy](https://github.com/quickwit-oss/tantivy) to create a fast full-text search index from Parquet files
 
-### Linting with Ruff
+2. **Storage** 💾  
+   Index stores id, title, and url; content stays in Parquet files (no duplication!)
+
+3. **Search** 🔍  
+   Query parsing using Tantivy's powerful query parser with fuzzy matching
+
+4. **Fetching** 📚  
+   Direct access to Parquet files using PyArrow for efficient columnar reading
+
+---
+
+## 🧪 Testing
+
+Run the built-in test to verify everything works:
 
 ```bash
-uv run ruff check .
+./run_finewiki.sh test
 ```
 
-### Testing
+This searches for "Banana" in titles and "Mozart" in content.
+
+---
+
+## 🛠️ Development (Optional)
+
+If you want to work on the code locally:
 
 ```bash
-uv run pytest
+# Install dependencies
+uv sync
+
+# Run indexer directly (without Docker)
+uv run python -m finewiki_mcp.indexer --parquet-dir finewiki_en --index-dir index_data
+
+# Run server directly
+uv run python -m finewiki_mcp.server --index-dir index_data --parquet-dir finewiki_en
 ```
 
-## License
+---
 
-This project is provided as-is for educational and research purposes.
+## 📚 License
+
+This project is provided as-is for educational and research purposes. Feel free to adapt and extend! 🚀
+
+---
+
+**Happy RAGging! 🧠✨**
