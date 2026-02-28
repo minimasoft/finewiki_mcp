@@ -75,7 +75,10 @@ def create_index(index_dir: Path) -> tantivy.Index:
     schema_builder.add_integer_field("id", stored=True)
     schema_builder.add_text_field("title", stored=True, index_option="position")
     schema_builder.add_text_field("content", stored=False, index_option="position")
-    schema_builder.add_text_field("url", stored=True, index_option="position")
+    # url is not indexed/stored for offline use
+    # schema_builder.add_text_field("url", stored=True, index_option="position")
+    schema_builder.add_integer_field("row_index", stored=True)
+    schema_builder.add_text_field("parquet_file_path", stored=True)
 
     schema = schema_builder.build()
     return tantivy.Index(schema, path=str(index_dir))
@@ -99,12 +102,15 @@ def index_parquet_file(
 
     table = reader.read().to_pandas()
 
-    for _, row in table.iterrows():
+    for row_idx, (_, row) in enumerate(table.iterrows()):
         doc = tantivy.Document()
         doc.add_integer("id", int(row.get("page_id", 0)))
         doc.add_text("title", str(row.get("title", "")))
         doc.add_text("content", str(row.get("text", "")))
-        doc.add_text("url", str(row.get("url", "")))
+        # url is not indexed/stored for offline use
+        # doc.add_text("url", str(row.get("url", "")))
+        doc.add_integer("row_index", row_idx)
+        doc.add_text("parquet_file_path", str(parquet_file))
         writer.add_document(doc)
 
     writer.commit()

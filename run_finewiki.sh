@@ -42,6 +42,7 @@ build_image() {
 
 # Function to run in index mode
 run_index() {
+    build_image
     local parquet_dir="$PARQUET_DIR"
     local index_dir="$INDEX_DIR"
 
@@ -80,7 +81,7 @@ run_index() {
     # Get the resolved path for parquet directory (handles symlinks)
     local resolved_parquet=$(realpath "$parquet_dir")
 
-    docker run --rm -t \
+    docker run --rm -i \
         -v "$PROJECT_DIR:/host_project" \
         -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
@@ -128,12 +129,12 @@ run_server() {
         echo "Server may fail if it cannot find parquet files for content fetching."
     fi
 
-    echo "Starting MCP server..."
-    echo "  Index dir:   $index_dir"
-    echo "  Parquet dir: $parquet_dir"
+    # Get the resolved path for parquet directory (handles symlinks)
+    local resolved_parquet=$(realpath "$parquet_dir")
 
-    docker run --rm -it \
+    docker run --rm -i \
         -v "$PROJECT_DIR:/host_project" \
+        -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
         --publish 9000:9000 \
         --name "$CONTAINER_NAME" \
@@ -142,11 +143,12 @@ run_server() {
         "$IMAGE_NAME" \
         /app/.venv/bin/python -u src/finewiki_mcp/server.py \
         --index-dir "/host_project/$(basename "$index_dir")" \
-        --parquet-dir "/host_project/$(basename "$parquet_dir")"
+        --parquet-dir "/parquet_data/$(basename "$resolved_parquet")"
 }
 
 # Function to run in test mode
 run_test() {
+    build_image
     local index_dir="$INDEX_DIR"
     local parquet_dir="$PARQUET_DIR"
 
@@ -185,19 +187,23 @@ run_test() {
     echo "  Index dir:   $index_dir"
     echo "  Parquet dir: $parquet_dir"
 
-    docker run --rm -t \
+    # Get the resolved path for parquet directory (handles symlinks)
+    local resolved_parquet=$(realpath "$parquet_dir")
+
+    docker run --rm -i \
         -v "$PROJECT_DIR:/host_project" \
+        -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
         --entrypoint="" \
         -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
         /app/.venv/bin/python -u src/finewiki_mcp/server.py \
         --index-dir "/host_project/$(basename "$index_dir")" \
-        --parquet-dir "/host_project/$(basename "$parquet_dir")" \
+        --parquet-dir "/parquet_data/$(basename "$resolved_parquet")" \
         --mode test
 }
 
-build_image
+#build_image
 
 # Main logic
 case "$MODE" in

@@ -13,7 +13,10 @@ def get_schema() -> tantivy.Schema:
     schema_builder.add_integer_field("id", stored=True)
     schema_builder.add_text_field("title", stored=True, index_option="position")
     schema_builder.add_text_field("content", stored=False, index_option="position")
-    schema_builder.add_text_field("url", stored=True, index_option="position")
+    # url is not indexed/stored for offline use
+    # schema_builder.add_text_field("url", stored=True, index_option="position")
+    schema_builder.add_integer_field("row_index", stored=True)
+    schema_builder.add_text_field("parquet_file_path", stored=True)
     return schema_builder.build()
 
 
@@ -30,6 +33,7 @@ class FineWikiSearcher:
             self.index = tantivy.Index(get_schema(), path=str(self.index_path / '.index'))
         self.reader = self.index.searcher()
         self._parquet_files: list[pq.ParquetFile] | None = None
+        self._parquet_file_map: dict[str, pq.ParquetFile] | None = None  # Cache for fast file lookup by path
 
     def _load_parquet_files(self) -> list[pq.ParquetFile]:
         """Lazy load parquet files for content fetching."""
@@ -38,6 +42,33 @@ class FineWikiSearcher:
             for pf in sorted(self.parquet_dir.glob("*.parquet")):
                 self._parquet_files.append(pq.ParquetFile(pf))
         return self._parquet_files
+
+    def _get_parquet_file_by_path(self, file_path: str) -> pq.ParquetFile:
+        """Get a parquet file by its path using cached file map for fast lookup."""
+        if self._parquet_file_map is None:
+            self._parquet_file_map = {}
+            for pf in sorted(self.parquet_dir.glob("*.parquet")):
+                self._parquet_file_map[str(pf)] = pq.ParquetFile(pf)
+        return self._parquet_file_map[file_path]
+
+    def _get_document_by_id_from_index(self, doc_id: int) -> dict | None:
+        """Get document metadata from the index (without full content)."""
+        query = tantivy.QueryTerm(tantivy.Term.from_u64("id", doc_id), indexed=True)
+        searcher = self.index.searcher()
+        results = searcher.search(query, limit=1)
+
+        if results.hits:
+            score, doc_address = results.hits[0]
+            doc = searcher.doc(doc_address)
+            return {
+                "id": doc.get_first("id"),
+                "title": doc.get_first("title"),
+                # url is not indexed/stored for offline use
+                # "url": doc.get_first("url"),
+                "row_index": doc.get_first("row_index"),
+                "parquet_file_path": doc.get_first("parquet_file_path"),
+            }
+        return None
 
     def search_by_title(
         self, query: str, limit: int = 10
@@ -54,7 +85,10 @@ class FineWikiSearcher:
             hits.append({
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                "url": doc.get_first("url"),
+                # url is not indexed/stored for offline use
+                # "url": doc.get_first("url"),
+                "row_index": doc.get_first("row_index"),
+                "parquet_file_path": doc.get_first("parquet_file_path"),
                 "score": float(score),
             })
 
@@ -75,26 +109,39 @@ class FineWikiSearcher:
             hits.append({
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                "url": doc.get_first("url"),
+                # url is not indexed/stored for offline use
+                # "url": doc.get_first("url"),
+                "row_index": doc.get_first("row_index"),
+                "parquet_file_path": doc.get_first("parquet_file_path"),
                 "score": float(score),
             })
 
         return hits
 
     def fetch_content(self, doc_id: int) -> dict | None:
-        """Fetch full content of a document by ID from parquet files."""
-        parquet_files = self._load_parquet_files()
+        """Fetch full content of a document by ID using indexed row_index and parquet_file_path for fast retrieval."""
+        # First get the metadata from index to find row and file location
+        meta = self._get_document_by_id_from_index(doc_id)
+        if meta is None:
+            return None
 
-        for pf in parquet_files:
-            table = pf.read().to_pandas()
-            if doc_id in table["page_id"].values:
-                row = table[table["page_id"] == doc_id].iloc[0]
-                return {
-                    "id": int(row["page_id"]),
-                    "title": str(row.get("title", "")),
-                    "content": str(row.get("text", "")),
-                    "url": str(row.get("url", "")),
-                }
+        row_index = meta["row_index"]
+        parquet_file_path = meta["parquet_file_path"]
+
+        # Fast lookup of parquet file by path instead of scanning all files
+        pf = self._get_parquet_file_by_path(parquet_file_path)
+
+        # Read only the specific row using row index
+        table = pf.read().to_pandas()
+        if row_index < len(table):
+            row = table.iloc[row_index]
+            return {
+                "id": int(row["page_id"]),
+                "title": str(row.get("title", "")),
+                "content": str(row.get("text", "")),
+                # url is not indexed/stored for offline use
+                # "url": str(row.get("url", "")),
+            }
 
         return None
 
@@ -110,7 +157,10 @@ class FineWikiSearcher:
             return {
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                "url": doc.get_first("url"),
+                # url is not indexed/stored for offline use
+                # "url": doc.get_first("url"),
+                "row_index": doc.get_first("row_index"),
+                "parquet_file_path": doc.get_first("parquet_file_path"),
                 "score": float(score),
             }
         return None
@@ -143,7 +193,7 @@ def create_app():
         return [
             Tool(
                 name="search_by_title",
-                description="Search for documents by title. Returns matching document IDs, titles, URLs and scores.",
+                description="Search for documents by title. Returns matching document IDs, titles and scores.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -155,7 +205,7 @@ def create_app():
             ),
             Tool(
                 name="search_by_content",
-                description="Search for documents by full content. Returns matching document IDs, titles, URLs and scores.",
+                description="Search for documents by full content. Returns matching document IDs, titles and scores.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -167,7 +217,7 @@ def create_app():
             ),
             Tool(
                 name="fetch_content",
-                description="Fetch the full content of a document by its ID. Returns id, title, content, and url.",
+                description="Fetch the full content of a document by its ID. Returns id, title, and content.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -216,12 +266,12 @@ def create_app():
 def run_test(index_dir: str, parquet_dir: str) -> None:
     """Run a quick test mode: load index and search for 'Banana' in titles and 'Mozart' in content."""
     print(f"Test Mode - Loading index from {index_dir}...")
-    
+
     start_time = time.time()
     searcher = FineWikiSearcher(index_dir=index_dir, parquet_dir=parquet_dir)
     load_time = time.time() - start_time
     print(f"  Index loaded in {load_time:.3f}s")
-    
+
     # Search for 'Banana' in titles
     print("\nSearching for 'Banana' in titles...")
     start_time = time.time()
@@ -231,7 +281,7 @@ def run_test(index_dir: str, parquet_dir: str) -> None:
     print(f"  Found {len(title_results)} results:")
     for r in title_results:
         print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
-    
+
     # Search for 'Mozart' in content
     print("\nSearching for 'Mozart' in content...")
     start_time = time.time()
@@ -241,7 +291,7 @@ def run_test(index_dir: str, parquet_dir: str) -> None:
     print(f"  Found {len(content_results)} results:")
     for r in content_results:
         print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
-    
+
     print("\nTest completed successfully!")
 
 
