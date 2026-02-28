@@ -72,7 +72,7 @@ def create_index(index_dir: Path) -> tantivy.Index:
     index_dir.mkdir(parents=True, exist_ok=True)
 
     schema_builder = tantivy.SchemaBuilder()
-    schema_builder.add_integer_field("id", stored=True)
+    schema_builder.add_integer_field("id", stored=True, indexed=True)
     schema_builder.add_text_field("title", stored=True, index_option="position")
     schema_builder.add_text_field("content", stored=False, index_option="position")
     # url is not indexed/stored for offline use

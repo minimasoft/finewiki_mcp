@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 def get_schema() -> tantivy.Schema:
     """Return the schema used for the index."""
     schema_builder = tantivy.SchemaBuilder()
-    schema_builder.add_integer_field("id", stored=True)
+    schema_builder.add_integer_field("id", stored=True, indexed=True)
     schema_builder.add_text_field("title", stored=True, index_option="position")
     schema_builder.add_text_field("content", stored=False, index_option="position")
     # url is not indexed/stored for offline use
@@ -53,7 +53,9 @@ class FineWikiSearcher:
 
     def _get_document_by_id_from_index(self, doc_id: int) -> dict | None:
         """Get document metadata from the index (without full content)."""
-        query = tantivy.QueryTerm(tantivy.Term.from_u64("id", doc_id), indexed=True)
+        # Use parse_query with a numeric range to find document by ID
+        query = self.index.parse_query(f"id:{doc_id}", ["id"])
+        
         searcher = self.index.searcher()
         results = searcher.search(query, limit=1)
 
@@ -145,26 +147,6 @@ class FineWikiSearcher:
 
         return None
 
-    def get_document_by_id(self, doc_id: int) -> dict | None:
-        """Get document metadata from the index (without full content)."""
-        query = tantivy.QueryTerm(tantivy.Term.from_u64("id", doc_id), indexed=True)
-        searcher = self.index.searcher()
-        results = searcher.search(query, limit=1)
-
-        if results.hits:
-            score, doc_address = results.hits[0]
-            doc = searcher.doc(doc_address)
-            return {
-                "id": doc.get_first("id"),
-                "title": doc.get_first("title"),
-                # url is not indexed/stored for offline use
-                # "url": doc.get_first("url"),
-                "row_index": doc.get_first("row_index"),
-                "parquet_file_path": doc.get_first("parquet_file_path"),
-                "score": float(score),
-            }
-        return None
-
 
 def create_app():
     """Create the MCP server application."""
@@ -194,7 +176,7 @@ def create_app():
             Tool(
                 name="search_by_title",
                 description="Search for documents by title. Returns matching document IDs, titles and scores.",
-                parameters={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Search query for titles"},
@@ -206,7 +188,7 @@ def create_app():
             Tool(
                 name="search_by_content",
                 description="Search for documents by full content. Returns matching document IDs, titles and scores.",
-                parameters={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Search query for content"},
@@ -218,7 +200,7 @@ def create_app():
             Tool(
                 name="fetch_content",
                 description="Fetch the full content of a document by its ID. Returns id, title, and content.",
-                parameters={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "doc_id": {"type": "integer", "description": "Document ID to fetch"},
@@ -291,6 +273,21 @@ def run_test(index_dir: str, parquet_dir: str) -> None:
     print(f"  Found {len(content_results)} results:")
     for r in content_results:
         print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
+
+    # Fetch content of first Banana result
+    if title_results:
+        print("\nFetching content of first 'Banana' result...")
+        start_time = time.time()
+        content = searcher.fetch_content(title_results[0]["id"])
+        fetch_time = time.time() - start_time
+        if content:
+            print(f"  Fetch completed in {fetch_time:.3f}s")
+            print(f"  Title: {content['title']}")
+            print(f"  Content length: {len(content['content'])} characters")
+            preview = content["content"][:200].replace("\n", " ")
+            print(f"  Preview: {preview}...")
+        else:
+            print("  Document not found")
 
     print("\nTest completed successfully!")
 
