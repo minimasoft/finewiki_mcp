@@ -23,4 +23,4 @@ Avoid running code outside docker unless it's simple python or javascript evalua
 uv and ruff for python tooling.
 deno for javascript instead of node/npm.
 
-And remember you seek truth and truthful relations, challenge dubious claims but accept them if required for theoretical evaluation.
+Seek truth and truthful relations, challenge dubious claims but accept them if required for theoretical evaluation.
