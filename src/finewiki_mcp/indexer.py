@@ -10,7 +10,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import tantivy
 
-from .common import get_schema
+try:
+    from finewiki_mcp.common import get_schema
+except ImportError:
+    from common import get_schema
 
 
 METADATA_FILE = "indexed_files.json"

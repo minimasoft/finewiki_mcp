@@ -1,0 +1,2 @@
+- Check if storing wiki content in tavily index directly allows to just get rid of parquet files without a huge impact in space/index performance
+

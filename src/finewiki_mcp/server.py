@@ -6,7 +6,10 @@ from pathlib import Path
 import tantivy
 import pyarrow.parquet as pq
 
-from .common import get_schema
+try:
+    from finewiki_mcp.common import get_schema
+except ImportError:
+    from common import get_schema
 
 
 class FineWikiSearcher:
