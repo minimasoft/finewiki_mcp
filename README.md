@@ -7,8 +7,8 @@ A **Model Context Protocol (MCP)** server that provides search and content retri
 > **Key Features:**
 > - 🔍 Fast full-text search across multi-gigabyte datasets
 > - 🐳 Runs in Docker (no local dependencies needed)
-> - ⚡ Uses Tantivy for lightning-fast indexing and search
-> - 📦 Works with Parquet files for efficient columnar storage
+> - ⚡ Uses Tantivy for lightning-fast indexing and search (~20ms content retrieval)
+> - 💾 All-inclusive index: 30GB for 6.6M articles (parquet files optional after indexing)
 
 ---
 
@@ -36,7 +36,7 @@ This downloads all parquet files using aria2 for maximum speed ⚡
 > ```bash
 > # Ubuntu/Debian
 > sudo apt install aria2
-> 
+>
 > # macOS
 > brew install aria2
 > ```
@@ -61,6 +61,7 @@ This will:
 - Build the Docker image (once)
 - Scan all `.parquet` files in `finewiki_en/`
 - Create the search index in `index_data/`
+- **Note:** After indexing, you can optionally delete parquet files as all content is now stored in the index
 
 ### Step 2: Start the MCP Server
 
@@ -69,6 +70,22 @@ This will:
 ```
 
 The server is now running and ready to accept MCP connections!
+
+---
+
+## 🧪 Testing
+
+Run the built-in test to verify everything works:
+
+```bash
+./run_finewiki.sh test
+```
+
+This will:
+- Search for "Banana" in titles (returns 5 results)
+- Search for "Mozart" in content (returns 5 results)
+- Fetch full content of each result to measure real-world performance
+- Report timing statistics and memory usage
 
 ---
 
@@ -113,7 +130,7 @@ finewiki_mcp/
 │   ├── indexer.py        # Index generation script
 │   └── server.py         # MCP server implementation
 ├── index_data/           # Tantivy index storage (created by indexer) 🗂️
-├── finewiki_en/          # Parquet files directory 📦
+├── finewiki_en/          # Parquet files directory - can be deleted after indexing! 📦
 ├── run_finewiki.sh       # Docker runner script ⚙️
 ├── pyproject.toml        # Project dependencies
 └── README.md
@@ -123,29 +140,31 @@ finewiki_mcp/
 
 ## 🔧 How It Works
 
-1. **Indexing** 📝  
-   Uses [Tantivy](https://github.com/quickwit-oss/tantivy) to create a fast full-text search index from Parquet files
+1. **Indexing** 📝
+   Uses [Tantivy](https://github.com/quickwit-oss/tantivy) to create a fast full-text search index from Parquet files. The index includes:
+   - `id`: Document identifier (stored, indexed)
+   - `title`: Document title (stored, indexed)
+   - `content`: Full text content (stored, indexed)
+   - `url`: Source URL (stored, indexed)
 
-2. **Storage** 💾  
-   Index stores id, title, and url; content stays in Parquet files (no duplication!)
+2. **Storage** 💾
+   After indexing (~30GB for 6.6M articles), parquet files are no longer needed. All content is stored directly in the index.
 
-3. **Search** 🔍  
+3. **Search** 🔍
    Query parsing using Tantivy's powerful query parser with fuzzy matching
 
-4. **Fetching** 📚  
-   Direct access to Parquet files using PyArrow for efficient columnar reading
+4. **Fetching** 📚
+   Direct access to indexed content - no file lookups required!
 
 ---
 
-## 🧪 Testing
+## 📊 Storage Requirements
 
-Run the built-in test to verify everything works:
+| Dataset | Articles | Index Size | Parquet Files (optional) |
+|---------|----------|------------|--------------------------|
+| FineWiki English | 6.6M | ~30GB | ~20-25GB |
 
-```bash
-./run_finewiki.sh test
-```
-
-This searches for "Banana" in titles and "Mozart" in content.
+> **Note:** After running `./run_finewiki.sh index`, you can safely delete the parquet files if disk space is a concern.
 
 ---
 

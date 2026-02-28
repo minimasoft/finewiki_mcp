@@ -1,10 +1,10 @@
 """MCP Server for FineWiki with Tantivy search capabilities."""
 
+import sys
 import time
 from pathlib import Path
 
 import tantivy
-import pyarrow.parquet as pq
 
 try:
     from finewiki_mcp.common import get_schema
@@ -17,37 +17,18 @@ class FineWikiSearcher:
 
     def __init__(self, index_dir: str | Path = "index_data", parquet_dir: str | Path = "finewiki_en"):
         self.index_path = Path(index_dir)
-        self.parquet_dir = Path(parquet_dir)
         # Try to open existing index, or create new one
         if (self.index_path / "segments").exists():
             self.index = tantivy.Index.open(self.index_path)
         else:
             self.index = tantivy.Index(get_schema(), path=str(self.index_path / '.index'))
         self.reader = self.index.searcher()
-        self._parquet_files: list[pq.ParquetFile] | None = None
-        self._parquet_file_map: dict[str, pq.ParquetFile] | None = None  # Cache for fast file lookup by path
-
-    def _load_parquet_files(self) -> list[pq.ParquetFile]:
-        """Lazy load parquet files for content fetching."""
-        if self._parquet_files is None:
-            self._parquet_files = []
-            for pf in sorted(self.parquet_dir.glob("*.parquet")):
-                self._parquet_files.append(pq.ParquetFile(pf))
-        return self._parquet_files
-
-    def _get_parquet_file_by_path(self, file_path: str) -> pq.ParquetFile:
-        """Get a parquet file by its path using cached file map for fast lookup."""
-        if self._parquet_file_map is None:
-            self._parquet_file_map = {}
-            for pf in sorted(self.parquet_dir.glob("*.parquet")):
-                self._parquet_file_map[str(pf)] = pq.ParquetFile(pf)
-        return self._parquet_file_map[file_path]
 
     def _get_document_by_id_from_index(self, doc_id: int) -> dict | None:
-        """Get document metadata from the index (without full content)."""
+        """Get document from the index."""
         # Use parse_query with a numeric range to find document by ID
         query = self.index.parse_query(f"id:{doc_id}", ["id"])
-        
+
         searcher = self.index.searcher()
         results = searcher.search(query, limit=1)
 
@@ -57,10 +38,8 @@ class FineWikiSearcher:
             return {
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                # url is not indexed/stored for offline use
-                # "url": doc.get_first("url"),
-                "row_index": doc.get_first("row_index"),
-                "parquet_file_path": doc.get_first("parquet_file_path"),
+                "content": doc.get_first("content"),
+                "url": doc.get_first("url"),
             }
         return None
 
@@ -79,10 +58,6 @@ class FineWikiSearcher:
             hits.append({
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                # url is not indexed/stored for offline use
-                # "url": doc.get_first("url"),
-                "row_index": doc.get_first("row_index"),
-                "parquet_file_path": doc.get_first("parquet_file_path"),
                 "score": float(score),
             })
 
@@ -103,41 +78,14 @@ class FineWikiSearcher:
             hits.append({
                 "id": doc.get_first("id"),
                 "title": doc.get_first("title"),
-                # url is not indexed/stored for offline use
-                # "url": doc.get_first("url"),
-                "row_index": doc.get_first("row_index"),
-                "parquet_file_path": doc.get_first("parquet_file_path"),
                 "score": float(score),
             })
 
         return hits
 
     def fetch_content(self, doc_id: int) -> dict | None:
-        """Fetch full content of a document by ID using indexed row_index and parquet_file_path for fast retrieval."""
-        # First get the metadata from index to find row and file location
-        meta = self._get_document_by_id_from_index(doc_id)
-        if meta is None:
-            return None
-
-        row_index = meta["row_index"]
-        parquet_file_path = meta["parquet_file_path"]
-
-        # Fast lookup of parquet file by path instead of scanning all files
-        pf = self._get_parquet_file_by_path(parquet_file_path)
-
-        # Read only the specific row using row index
-        table = pf.read().to_pandas()
-        if row_index < len(table):
-            row = table.iloc[row_index]
-            return {
-                "id": int(row["page_id"]),
-                "title": str(row.get("title", "")),
-                "content": str(row.get("text", "")),
-                # url is not indexed/stored for offline use
-                # "url": str(row.get("url", "")),
-            }
-
-        return None
+        """Fetch full content of a document by ID directly from the index."""
+        return self._get_document_by_id_from_index(doc_id)
 
 
 def create_app():
@@ -167,7 +115,7 @@ def create_app():
         return [
             Tool(
                 name="search_by_title",
-                description="Search for documents by title. Returns matching document IDs, titles and scores.",
+                description="Search for documents by title. Returns matching document IDs and titles.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -179,7 +127,7 @@ def create_app():
             ),
             Tool(
                 name="search_by_content",
-                description="Search for documents by full content. Returns matching document IDs, titles and scores.",
+                description="Search for documents by full content. Returns matching document IDs and titles.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -191,7 +139,7 @@ def create_app():
             ),
             Tool(
                 name="fetch_content",
-                description="Fetch the full content of a document by its ID. Returns id, title, and content.",
+                description="Fetch the full content of a document by its ID. Returns id, title, content, and url.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -230,7 +178,7 @@ def create_app():
 
     def initialize_searcher(index_dir: str, parquet_dir: str):
         nonlocal searcher
-        searcher = FineWikiSearcher(index_dir=index_dir, parquet_dir=parquet_dir)
+        searcher = FineWikiSearcher(index_dir=index_dir)
         print(f"Loaded index from {index_dir}")
 
     return server, initialize_searcher
@@ -239,12 +187,25 @@ def create_app():
 
 def run_test(index_dir: str, parquet_dir: str) -> None:
     """Run a quick test mode: load index and search for 'Banana' in titles and 'Mozart' in content."""
+    import resource
+
+    def get_memory_usage() -> float:
+        """Get current memory usage in GB."""
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        # ru_maxrss is in KB on Linux, bytes on macOS
+        if sys.platform == "darwin":
+            return usage.ru_maxrss / (1024 * 1024 * 1024)
+        else:
+            return usage.ru_maxrss / (1024 * 1024)
+
     print(f"Test Mode - Loading index from {index_dir}...")
 
     start_time = time.time()
-    searcher = FineWikiSearcher(index_dir=index_dir, parquet_dir=parquet_dir)
+    searcher = FineWikiSearcher(index_dir=index_dir)
     load_time = time.time() - start_time
+    mem_after_load = get_memory_usage()
     print(f"  Index loaded in {load_time:.3f}s")
+    print(f"  Memory after loading: {mem_after_load:.2f} GB")
 
     # Search for 'Banana' in titles
     print("\nSearching for 'Banana' in titles...")
@@ -266,20 +227,57 @@ def run_test(index_dir: str, parquet_dir: str) -> None:
     for r in content_results:
         print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
 
-    # Fetch content of first Banana result
+    # Fetch full content of ALL Banana results
     if title_results:
-        print("\nFetching content of first 'Banana' result...")
-        start_time = time.time()
-        content = searcher.fetch_content(title_results[0]["id"])
-        fetch_time = time.time() - start_time
-        if content:
-            print(f"  Fetch completed in {fetch_time:.3f}s")
-            print(f"  Title: {content['title']}")
-            print(f"  Content length: {len(content['content'])} characters")
-            preview = content["content"][:200].replace("\n", " ")
-            print(f"  Preview: {preview}...")
-        else:
-            print("  Document not found")
+        print("\nFetching full content of all 'Banana' results...")
+        fetch_times = []
+        for i, result in enumerate(title_results):
+            start_time = time.time()
+            content = searcher.fetch_content(result["id"])
+            elapsed = time.time() - start_time
+            fetch_times.append(elapsed)
+
+            if content:
+                print(f"  Result {i+1}: Fetch completed in {elapsed:.3f}s")
+                print(f"    Title: {content['title']}")
+                print(f"    Content length: {len(content['content'])} characters")
+                preview = content["content"][:200].replace("\n", " ")
+                print(f"    Preview: {preview}...")
+            else:
+                print(f"  Result {i+1}: Document not found")
+
+        avg_fetch_time = sum(fetch_times) / len(fetch_times)
+        total_fetch_time = sum(fetch_times)
+        mem_after_fetch = get_memory_usage()
+        print(f"\n  Total fetch time for {len(title_results)} results: {total_fetch_time:.3f}s")
+        print(f"  Average fetch time per result: {avg_fetch_time*1000:.1f}ms")
+        print(f"  Memory after fetching: {mem_after_fetch:.2f} GB")
+
+    # Fetch full content of ALL Mozart results
+    if content_results:
+        print("\nFetching full content of all 'Mozart' results...")
+        fetch_times = []
+        for i, result in enumerate(content_results):
+            start_time = time.time()
+            content = searcher.fetch_content(result["id"])
+            elapsed = time.time() - start_time
+            fetch_times.append(elapsed)
+
+            if content:
+                print(f"  Result {i+1}: Fetch completed in {elapsed:.3f}s")
+                print(f"    Title: {content['title']}")
+                print(f"    Content length: {len(content['content'])} characters")
+                preview = content["content"][:200].replace("\n", " ")
+                print(f"    Preview: {preview}...")
+            else:
+                print(f"  Result {i+1}: Document not found")
+
+        avg_fetch_time = sum(fetch_times) / len(fetch_times)
+        total_fetch_time = sum(fetch_times)
+        mem_after_all = get_memory_usage()
+        print(f"\n  Total fetch time for {len(content_results)} results: {total_fetch_time:.3f}s")
+        print(f"  Average fetch time per result: {avg_fetch_time*1000:.1f}ms")
+        print(f"  Memory after fetching: {mem_after_all:.2f} GB")
 
     print("\nTest completed successfully!")
 
