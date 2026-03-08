@@ -19,7 +19,7 @@ class FineWikiSearcher:
     Supports searching by title and content, with document fetching by ID.
     """
 
-    def __init__(self, index_dir: str | Path = "index_data", parquet_dir: str | Path = "finewiki_en"):
+    def __init__(self, index_dir: str | Path = "index_data"):
         self.index_path = Path(index_dir)
         # Try to open existing index, or create new one
         if (self.index_path / "segments").exists():
@@ -139,7 +139,7 @@ class FineWebEduSearcher:
         - language: Language code
     """
 
-    def __init__(self, index_dir: str | Path = "index_data_fineweb_edu", parquet_dir: str | Path = "fineweb-edu"):
+    def __init__(self, index_dir: str | Path = "index_data_fineweb_edu"):
         self.index_path = Path(index_dir)
         # Try to open existing index, or create new one
         if (self.index_path / "segments").exists():
@@ -560,26 +560,36 @@ Best for: Getting full educational articles, tutorials, or documentation.""",
 
         # FineWeb-Edu tools
         elif name == "fineweb_search_by_text":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
             req = SearchByTextRequest(**arguments)
             results = fineweb_edu_searcher.search_by_text(req.query, req.limit)
             return [TextContent(type="text", text=str(results))]
 
         elif name == "fineweb_search_by_dump":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
             req = SearchByDumpRequest(**arguments)
             results = fineweb_edu_searcher.search_by_dump(req.dump, req.limit)
             return [TextContent(type="text", text=str(results))]
 
         elif name == "fineweb_search_by_language":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
             req = SearchByLanguageRequest(**arguments)
             results = fineweb_edu_searcher.search_by_language(req.language, req.limit)
             return [TextContent(type="text", text=str(results))]
 
         elif name == "fineweb_search_by_date":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
             req = SearchByDateRequest(**arguments)
             results = fineweb_edu_searcher.search_by_date(req.date, req.limit)
             return [TextContent(type="text", text=str(results))]
 
         elif name == "fetch_edu_content":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
             req = FetchEduContentRequest(**arguments)
             content = fineweb_edu_searcher.fetch_content(req.doc_id)
             if content:
@@ -589,24 +599,25 @@ Best for: Getting full educational articles, tutorials, or documentation.""",
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-    def initialize_searchers(index_dir: str, parquet_dir: str):
+    def initialize_searchers(index_dir: str):
         nonlocal finewiki_searcher, fineweb_edu_searcher
         finewiki_searcher = FineWikiSearcher(index_dir=index_dir)
         print(f"Loaded FineWiki index from {index_dir}")
 
         # Try to load fineweb-edu index if it exists
-        fineweb_index_dir = Path("index_data_fineweb_edu")
-        if (fineweb_index_dir / "segments").exists() or (fineweb_index_dir / ".index" / "segments").exists():
-            fineweb_edu_searcher = FineWebEduSearcher(index_dir=fineweb_index_dir)
-            print(f"Loaded FineWeb-Edu index from {fineweb_index_dir}")
-        else:
-            print("FineWeb-Edu index not found (run indexer with --dataset fineweb-edu to create)")
+        # Derive the fineweb-edu index path from the parent of the provided index_dir
+        index_path = Path(index_dir)
+        fineweb_index_dir = index_path.parent / "index_data_fineweb_edu"
+        print(f"{fineweb_index_dir} and {index_path.parent}")
+
+        fineweb_edu_searcher = FineWebEduSearcher(index_dir=fineweb_index_dir)
+        print(f"Loaded FineWeb-Edu index from {fineweb_index_dir}")
 
     return server, initialize_searchers
 
 
 
-def run_test(index_dir: str, parquet_dir: str) -> None:
+def run_test(index_dir: str) -> None:
     """Run a quick test mode: load index and search for 'Banana' in titles and 'Mozart' in content."""
     import resource
 
@@ -701,7 +712,10 @@ def run_test(index_dir: str, parquet_dir: str) -> None:
         print(f"  Memory after fetching: {mem_after_all:.2f} GB")
 
     # Test FineWeb-Edu if available
-    fineweb_index_dir = Path("index_data_fineweb_edu")
+    # Derive the fineweb-edu index path from the parent of the provided index_dir
+    index_path = Path(index_dir)
+    fineweb_index_dir = index_path.parent / "index_data_fineweb_edu"
+    
     if (fineweb_index_dir / "segments").exists() or (fineweb_index_dir / ".index" / "segments").exists():
         print("\n=== Testing FineWeb-Edu Index ===")
         start_time = time.time()
@@ -745,11 +759,6 @@ if __name__ == "__main__":
         help="Directory containing the tantivy index (default: index_data)",
     )
     parser.add_argument(
-        "--parquet-dir",
-        default="finewiki_en",
-        help="Directory containing parquet files (default: finewiki_en)",
-    )
-    parser.add_argument(
         "--mode",
         choices=["server", "test"],
         default="server",
@@ -759,10 +768,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "test":
-        run_test(args.index_dir, args.parquet_dir)
+        run_test(args.index_dir)
     else:
         server, init_searchers = create_app()
-        init_searchers(args.index_dir, args.parquet_dir)
+        init_searchers(args.index_dir)
 
         async def main():
             from mcp.server.stdio import stdio_server

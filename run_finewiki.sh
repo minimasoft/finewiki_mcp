@@ -11,7 +11,6 @@ CONTAINER_NAME="finewiki-mcp"
 # Directories (defaults)
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INDEX_DIR="${PROJECT_DIR}/index_data"
-PARQUET_DIR=$(realpath "${PROJECT_DIR}/finewiki_en")
 DATASET="finewiki"
 
 # Parse arguments
@@ -27,10 +26,10 @@ if [[ "$MODE" != "index" && "$MODE" != "server" && "$MODE" != "test" ]]; then
     echo "          Options: --parquet-dir <dir> --index-dir <dir> --dataset <finewiki|fineweb-edu>"
     echo ""
     echo "  server  Run the MCP server"
-    echo "          Options: --index-dir <dir> --parquet-dir <dir> --dataset <finewiki|fineweb-edu>"
+    echo "          Options: --index-dir <dir> --dataset <finewiki|fineweb-edu>"
     echo ""
     echo "  test    Run a quick test (search for 'Banana' in titles and 'Mozart' in content)"
-    echo "          Options: --index-dir <dir> --parquet-dir <dir>"
+    echo "          Options: --index-dir <dir>"
     echo ""
     exit 1
 fi
@@ -113,7 +112,6 @@ run_index() {
 # Function to run in server mode
 run_server() {
     local index_dir="$INDEX_DIR"
-    local parquet_dir="$PARQUET_DIR"
     local dataset="$DATASET"
 
     # Parse remaining arguments
@@ -121,10 +119,6 @@ run_server() {
         case "$1" in
             --index-dir)
                 index_dir="$2"
-                shift 2
-                ;;
-            --parquet-dir)
-                parquet_dir="$2"
                 shift 2
                 ;;
             --dataset)
@@ -140,12 +134,7 @@ run_server() {
 
     # Set default paths based on dataset if not explicitly provided
     if [[ "$dataset" == "fineweb-edu" ]]; then
-        if [[ "$parquet_dir" == "$PARQUET_DIR" ]]; then
-            parquet_dir="${PROJECT_DIR}/fineweb-edu"
-        fi
-        if [[ "$index_dir" == "$INDEX_DIR" ]]; then
-            index_dir="${PROJECT_DIR}/index_data_fineweb_edu"
-        fi
+        index_dir="${PROJECT_DIR}/index_data_fineweb_edu"
     fi
 
     # Check if index exists
@@ -155,12 +144,12 @@ run_server() {
         exit 1
     fi
 
-    # Get the resolved path for parquet directory (handles symlinks)
-    local resolved_parquet=$(realpath "$parquet_dir")
+    echo "Running MCP server..."
+    echo "  Index dir:   $index_dir"
+    echo "  Dataset:     $dataset"
 
     docker run --rm -i \
         -v "$PROJECT_DIR:/host_project" \
-        -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
         --publish 9000:9000 \
         --name "$CONTAINER_NAME" \
@@ -168,25 +157,19 @@ run_server() {
         -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
         /app/.venv/bin/python -u src/finewiki_mcp/server.py \
-        --index-dir "/host_project/$(basename "$index_dir")" \
-        --parquet-dir "/parquet_data/$(basename "$resolved_parquet")"
+        --index-dir "/host_project/$(basename "$index_dir")"
 }
 
 # Function to run in test mode
 run_test() {
     build_image
     local index_dir="$INDEX_DIR"
-    local parquet_dir="$PARQUET_DIR"
 
     # Parse remaining arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --index-dir)
                 index_dir="$2"
-                shift 2
-                ;;
-            --parquet-dir)
-                parquet_dir="$2"
                 shift 2
                 ;;
             *)
@@ -203,29 +186,17 @@ run_test() {
         exit 1
     fi
 
-    # Check if parquet files exist
-    if [[ ! -d "$parquet_dir" ]]; then
-        echo "Warning: Parquet directory not found: $parquet_dir"
-        echo "Test may fail if it cannot find parquet files for content fetching."
-    fi
-
     echo "Running test mode..."
     echo "  Index dir:   $index_dir"
-    echo "  Parquet dir: $parquet_dir"
-
-    # Get the resolved path for parquet directory (handles symlinks)
-    local resolved_parquet=$(realpath "$parquet_dir")
 
     docker run --rm -i \
         -v "$PROJECT_DIR:/host_project" \
-        -v "$(dirname "$resolved_parquet"):/parquet_data" \
         -w /app \
         --entrypoint="" \
         -e PYTHONUNBUFFERED=1 \
         "$IMAGE_NAME" \
         /app/.venv/bin/python -u src/finewiki_mcp/server.py \
         --index-dir "/host_project/$(basename "$index_dir")" \
-        --parquet-dir "/parquet_data/$(basename "$resolved_parquet")" \
         --mode test
 }
 
