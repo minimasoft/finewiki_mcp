@@ -138,12 +138,7 @@ class FineWebEduSearcher:
     """
 
     def __init__(self, index_dir: str | Path = "index_data_fineweb_edu"):
-        self.index_path = Path(index_dir)
-        # Try to open existing index, or create new one
-        if (self.index_path / "segments").exists():
-            self.index = tantivy.Index.open(self.index_path)
-        else:
-            self.index = tantivy.Index(get_schema("fineweb-edu"), path=str(self.index_path / '.index'))
+        self.index = tantivy.Index(get_schema("fineweb-edu"), path=str(self.index_path / '.index'))
         self.reader = self.index.searcher()
 
     def _get_document_by_id_from_index(self, doc_id: str) -> dict | None:

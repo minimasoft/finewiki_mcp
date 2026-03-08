@@ -198,9 +198,12 @@ Best for: Getting full educational articles, tutorials, or documentation.""",
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
     def initialize_searchers(index_dir: str):
-        nonlocal finewiki_searcher
+        nonlocal finewiki_searcher, fineweb_edu_searcher
         finewiki_searcher = FineWikiSearcher(index_dir=index_dir)
         print(f"Loaded FineWiki index from {index_dir}")
+        edu_path = Path(index_dir).parent / "index_data_fineweb_edu"
+        fineweb_edu_searcher = FineWebEduSearcher(index_dir=edu_path)
+        print(f"Loaded FineWeb-Edu index from {edu_path}")
 
     return server, initialize_searchers
 
