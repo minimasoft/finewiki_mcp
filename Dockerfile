@@ -58,6 +58,9 @@ COPY main.py ./
 # Set PATH to use our managed Python first
 ENV PATH="/usr/local/python/bin:/app/.venv/bin:$PATH"
 
+# Add src directory to PYTHONPATH so finewiki_mcp can be imported
+ENV PYTHONPATH=/app/src:$PYTHONPATH
+
 # Override the default entrypoint with python from venv
 ENTRYPOINT ["/app/.venv/bin/python"]
 CMD ["src/finewiki_mcp/server.py", "--index-dir", "index_data", "--parquet-dir", "finewiki_en"]
