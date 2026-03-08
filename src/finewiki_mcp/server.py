@@ -33,6 +33,12 @@ def create_app():
     class FetchEduContentRequest(BaseModel):
         doc_id: str
 
+    class TextSearchKnowledgeRequest(BaseModel):
+        query: str
+
+    class FetchKnowledgeRequest(BaseModel):
+        doc_id: str
+
     server = Server("finewiki-search")
 
     finewiki_searcher: FineWikiSearcher | None = None
@@ -151,6 +157,54 @@ Best for: Getting full educational articles, tutorials, or documentation.""",
                     "required": ["doc_id"],
                 },
             ),
+            Tool(
+                name="text_search_knowledge",
+                description="""Full-text search across both Wikipedia and educational web content.
+
+Searches FineWiki (Wikipedia) and FineWeb-Edu (educational web) simultaneously.
+Returns up to 20 results split between sources (default 10-10).
+If one source has fewer results, the other gets more.
+
+IDs are prefixed with 'wiki:' or 'edu:' for use with fetch_knowledge.
+
+Best for: Broad research questions, exploring topics across multiple sources,
+finding both encyclopedic and educational content on a subject.""",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query - keywords or phrases to find across all knowledge sources"
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="fetch_knowledge",
+                description="""Fetch full content by prefixed ID from either Wikipedia or educational web.
+
+Use this after getting a document ID from text_search_knowledge.
+The doc_id should include the source prefix ('wiki:' or 'edu:').
+
+Returns complete article/document with all available fields.
+
+Best for: Getting detailed information after finding relevant documents.
+
+Examples:
+- 'wiki:12345' → Fetches Wikipedia article with ID 12345
+- 'edu:abc-def' → Fetches educational document with ID abc-def""",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {
+                            "type": "string",
+                            "description": "Prefixed document ID (e.g., 'wiki:12345' or 'edu:abc-def')"
+                        },
+                    },
+                    "required": ["doc_id"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -193,6 +247,39 @@ Best for: Getting full educational articles, tutorials, or documentation.""",
             if content:
                 return [TextContent(type="text", text=str(content))]
             return [TextContent(type="text", text="Document not found")]
+
+        # Aggregated knowledge tools
+        elif name == "text_search_knowledge":
+            if fineweb_edu_searcher is None:
+                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
+            req = TextSearchKnowledgeRequest(**arguments)
+            from finewiki_mcp.searcher import aggregate_search
+            results = aggregate_search(finewiki_searcher, fineweb_edu_searcher, req.query, total_limit=20)
+            return [TextContent(type="text", text=str(results))]
+
+        elif name == "fetch_knowledge":
+            req = FetchKnowledgeRequest(**arguments)
+            doc_id = req.doc_id
+            
+            # Parse prefix and fetch from appropriate source
+            if doc_id.startswith("wiki:"):
+                wiki_id = int(doc_id[5:])  # Remove 'wiki:' prefix
+                content = finewiki_searcher.fetch_content(wiki_id)
+                if content:
+                    return [TextContent(type="text", text=str(content))]
+                return [TextContent(type="text", text=f"Wikipedia document not found: {doc_id}")]
+            
+            elif doc_id.startswith("edu:"):
+                edu_id = doc_id[4:]  # Remove 'edu:' prefix
+                if fineweb_edu_searcher is None:
+                    return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
+                content = fineweb_edu_searcher.fetch_content(edu_id)
+                if content:
+                    return [TextContent(type="text", text=str(content))]
+                return [TextContent(type="text", text=f"Educational document not found: {doc_id}")]
+            
+            else:
+                return [TextContent(type="text", text=f"Invalid doc_id format: '{doc_id}'. Expected prefix 'wiki:' or 'edu:'")]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

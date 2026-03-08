@@ -210,3 +210,50 @@ class FineWebEduSearcher:
             Dictionary with all document fields or None if not found.
         """
         return self._get_document_by_id_from_index(doc_id)
+
+
+def aggregate_search(
+    wiki_searcher: FineWikiSearcher,
+    edu_searcher: FineWebEduSearcher,
+    query: str,
+    total_limit: int = 20
+) -> list[dict]:
+    """Aggregate search across both FineWiki and FineWeb-Edu datasets.
+
+    Splits results between sources (default 10-10 for total of 20).
+    If one source returns fewer results, the other gets more limit.
+    Prepends IDs with 'wiki:' or 'edu:' prefix for unified fetching.
+
+    Args:
+        wiki_searcher: FineWikiSearcher instance.
+        edu_searcher: FineWebEduSearcher instance.
+        query: Search query.
+        total_limit: Total number of results (default: 20).
+
+    Returns:
+        Combined list with prefixed IDs, titles/text previews, and scores.
+    """
+    half = total_limit // 2
+    wiki_results = wiki_searcher.search_by_content(query, limit=half)
+    
+    # Adjust edu limit based on wiki results count
+    remaining = total_limit - len(wiki_results)
+    edu_results = edu_searcher.search_by_text(query, limit=remaining)
+    
+    # Prefix IDs and combine
+    combined = []
+    for hit in wiki_results:
+        original_id = hit.pop("id")
+        hit["id"] = f"wiki:{original_id}"
+        hit["title"] = hit.get("title", "")
+        combined.append(hit)
+    
+    for hit in edu_results:
+        original_id = hit.pop("id")
+        hit["id"] = f"edu:{original_id}"
+        # Use text_preview as title substitute, truncate if needed
+        text_preview = hit.get("text_preview", "") or ""
+        hit["title"] = text_preview.split("...")[0][:100] + "..." if len(text_preview) > 100 else text_preview
+        combined.append(hit)
+    
+    return combined
