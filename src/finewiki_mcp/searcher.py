@@ -138,6 +138,7 @@ class FineWebEduSearcher:
     """
 
     def __init__(self, index_dir: str | Path = "index_data_fineweb_edu"):
+        self.index_path = Path(index_dir)
         self.index = tantivy.Index(get_schema("fineweb-edu"), path=str(self.index_path / '.index'))
         self.reader = self.index.searcher()
 
