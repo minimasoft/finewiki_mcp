@@ -12,6 +12,7 @@ CONTAINER_NAME="finewiki-mcp"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INDEX_DIR="${PROJECT_DIR}/index_data"
 PARQUET_DIR=$(realpath "${PROJECT_DIR}/finewiki_en")
+DATASET="finewiki"
 
 # Parse arguments
 MODE="${1:-}"
@@ -23,10 +24,10 @@ if [[ "$MODE" != "index" && "$MODE" != "server" && "$MODE" != "test" ]]; then
     echo ""
     echo "Modes:"
     echo "  index   Build the Tantivy index from parquet files"
-    echo "          Options: --parquet-dir <dir> --index-dir <dir>"
+    echo "          Options: --parquet-dir <dir> --index-dir <dir> --dataset <finewiki|fineweb-edu>"
     echo ""
     echo "  server  Run the MCP server"
-    echo "          Options: --index-dir <dir> --parquet-dir <dir>"
+    echo "          Options: --index-dir <dir> --parquet-dir <dir> --dataset <finewiki|fineweb-edu>"
     echo ""
     echo "  test    Run a quick test (search for 'Banana' in titles and 'Mozart' in content)"
     echo "          Options: --index-dir <dir> --parquet-dir <dir>"
@@ -45,6 +46,7 @@ run_index() {
     build_image
     local parquet_dir="$PARQUET_DIR"
     local index_dir="$INDEX_DIR"
+    local dataset="$DATASET"
 
     # Parse remaining arguments
     while [[ $# -gt 0 ]]; do
@@ -57,12 +59,26 @@ run_index() {
                 index_dir="$2"
                 shift 2
                 ;;
+            --dataset)
+                dataset="$2"
+                shift 2
+                ;;
             *)
                 echo "Unknown option: $1"
                 exit 1
                 ;;
         esac
     done
+
+    # Set default paths based on dataset if not explicitly provided
+    if [[ "$dataset" == "fineweb-edu" ]]; then
+        if [[ "$parquet_dir" == "$PARQUET_DIR" ]]; then
+            parquet_dir="${PROJECT_DIR}/fineweb-edu"
+        fi
+        if [[ "$index_dir" == "$INDEX_DIR" ]]; then
+            index_dir="${PROJECT_DIR}/index_data_fineweb_edu"
+        fi
+    fi
 
     # Ensure parquet directory exists
     if [[ ! -d "$parquet_dir" ]]; then
@@ -74,7 +90,7 @@ run_index() {
     # Create index directory if it doesn't exist
     mkdir -p "$index_dir"
 
-    echo "Running indexer..."
+    echo "Running indexer for $dataset..."
     echo "  Parquet dir: $parquet_dir"
     echo "  Index dir:   $index_dir"
 
@@ -90,13 +106,15 @@ run_index() {
         "$IMAGE_NAME" \
         /app/.venv/bin/python -u src/finewiki_mcp/indexer.py \
         --parquet-dir "/parquet_data/$(basename "$resolved_parquet")" \
-        --index-dir "/host_project/$(basename "$index_dir")"
+        --index-dir "/host_project/$(basename "$index_dir")" \
+        --dataset "$dataset"
 }
 
 # Function to run in server mode
 run_server() {
     local index_dir="$INDEX_DIR"
     local parquet_dir="$PARQUET_DIR"
+    local dataset="$DATASET"
 
     # Parse remaining arguments
     while [[ $# -gt 0 ]]; do
@@ -109,6 +127,10 @@ run_server() {
                 parquet_dir="$2"
                 shift 2
                 ;;
+            --dataset)
+                dataset="$2"
+                shift 2
+                ;;
             *)
                 echo "Unknown option: $1"
                 exit 1
@@ -116,17 +138,21 @@ run_server() {
         esac
     done
 
+    # Set default paths based on dataset if not explicitly provided
+    if [[ "$dataset" == "fineweb-edu" ]]; then
+        if [[ "$parquet_dir" == "$PARQUET_DIR" ]]; then
+            parquet_dir="${PROJECT_DIR}/fineweb-edu"
+        fi
+        if [[ "$index_dir" == "$INDEX_DIR" ]]; then
+            index_dir="${PROJECT_DIR}/index_data_fineweb_edu"
+        fi
+    fi
+
     # Check if index exists
     if [[ ! -d "$index_dir" ]]; then
         echo "Error: Index directory not found: $index_dir"
         echo "Run 'index' mode first to build the index."
         exit 1
-    fi
-
-    # Check if parquet files exist
-    if [[ ! -d "$parquet_dir" ]]; then
-        echo "Warning: Parquet directory not found: $parquet_dir"
-        echo "Server may fail if it cannot find parquet files for content fetching."
     fi
 
     # Get the resolved path for parquet directory (handles symlinks)

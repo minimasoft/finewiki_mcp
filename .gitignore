@@ -2,5 +2,6 @@ finewiki_en
 fineweb-edu
 *.pyc
 index_data
+index_data_fineweb_edu
 .ruff_cache
 .venv
