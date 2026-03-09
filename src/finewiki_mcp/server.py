@@ -15,24 +15,6 @@ def create_app():
     from mcp.types import Tool, TextContent
     from pydantic import BaseModel
 
-    class SearchByTitleRequest(BaseModel):
-        query: str
-        limit: int = 10
-
-    class SearchByContentRequest(BaseModel):
-        query: str
-        limit: int = 10
-
-    class FetchContentRequest(BaseModel):
-        doc_id: int
-
-    class SearchByTextRequest(BaseModel):
-        query: str
-        limit: int = 10
-
-    class FetchEduContentRequest(BaseModel):
-        doc_id: str
-
     class TextSearchKnowledgeRequest(BaseModel):
         query: str
 
@@ -48,115 +30,6 @@ def create_app():
     @server.list_tools()
     async def list_tools() -> list[Tool]:
         return [
-            Tool(
-                name="search_by_title",
-                description="""Search for Wikipedia articles by title.
-
-Use this when you know the exact or partial title of an article you're looking for.
-Returns matching document IDs and titles that can be used with fetch_content.
-
-Best for: Looking up specific topics, people, places, or concepts by name.""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query - article title or keywords (e.g., 'Banana', 'Albert Einstein')"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 10, max: 100)"
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="search_by_content",
-                description="""Search Wikipedia articles by full content.
-
-Use this when you're looking for articles containing specific information,
-but don't know the exact title. Searches the entire article text.
-
-Best for: Finding articles about concepts, facts, or detailed information.""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query - keywords or phrases to find in article content"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 10, max: 100)"
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="fetch_content",
-                description="""Fetch the full content of a Wikipedia article by ID.
-
-Use this after getting a document ID from search_by_title or search_by_content.
-Returns the complete article with id, title, content, and url.
-
-Best for: Getting detailed information about a specific topic.""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "doc_id": {
-                            "type": "integer",
-                            "description": "The document ID (Wikipedia page ID) to fetch"
-                        },
-                    },
-                    "required": ["doc_id"],
-                },
-            ),
-            Tool(
-                name="fineweb_search_by_text",
-                description="""Search FineWeb-Edu educational content by text.
-
-FineWeb-Edu contains curated educational content from the web. Use this to find
-educational articles, tutorials, documentation, and learning materials.
-
-Returns document IDs with text previews that can be used with fetch_edu_content.
-
-Best for: Finding educational resources, tutorials, documentation, and learning materials.""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query - keywords or phrases in educational content"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 10, max: 100)"
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="fetch_edu_content",
-                description="""Fetch the full content of a FineWeb-Edu document by ID.
-
-Use this after getting a document ID from fineweb_search_by_text.
-Returns complete document with id, text, dump, url, date, file_path, and language.
-
-Best for: Getting full educational articles, tutorials, or documentation.""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "doc_id": {
-                            "type": "string",
-                            "description": "The document ID (string identifier) to fetch"
-                        },
-                    },
-                    "required": ["doc_id"],
-                },
-            ),
             Tool(
                 name="text_search_knowledge",
                 description="""Full-text search across both Wikipedia and educational web content.
@@ -174,7 +47,7 @@ finding both encyclopedic and educational content on a subject.""",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search query - keywords or phrases to find across all knowledge sources"
+                            "description": "Search query - keywords or phrases to find across all knowledge sources",
                         },
                     },
                     "required": ["query"],
@@ -199,7 +72,7 @@ Examples:
                     "properties": {
                         "doc_id": {
                             "type": "string",
-                            "description": "Prefixed document ID (e.g., 'wiki:12345' or 'edu:abc-def')"
+                            "description": "Prefixed document ID (e.g., 'wiki:12345' or 'edu:abc-def')",
                         },
                     },
                     "required": ["doc_id"],
@@ -208,78 +81,67 @@ Examples:
         ]
 
     @server.call_tool()
-    async def call_tool(
-        name: str, arguments: dict
-    ) -> list[TextContent]:
+    async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         nonlocal finewiki_searcher, fineweb_edu_searcher
 
-        # FineWiki tools
-        if name == "search_by_title":
-            req = SearchByTitleRequest(**arguments)
-            results = finewiki_searcher.search_by_title(req.query, req.limit)
-            return [TextContent(type="text", text=str(results))]
-
-        elif name == "search_by_content":
-            req = SearchByContentRequest(**arguments)
-            results = finewiki_searcher.search_by_content(req.query, req.limit)
-            return [TextContent(type="text", text=str(results))]
-
-        elif name == "fetch_content":
-            req = FetchContentRequest(**arguments)
-            content = finewiki_searcher.fetch_content(req.doc_id)
-            if content:
-                return [TextContent(type="text", text=str(content))]
-            return [TextContent(type="text", text="Document not found")]
-
-        # FineWeb-Edu tools
-        elif name == "fineweb_search_by_text":
-            if fineweb_edu_searcher is None:
-                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
-            req = SearchByTextRequest(**arguments)
-            results = fineweb_edu_searcher.search_by_text(req.query, req.limit)
-            return [TextContent(type="text", text=str(results))]
-
-        elif name == "fetch_edu_content":
-            if fineweb_edu_searcher is None:
-                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
-            req = FetchEduContentRequest(**arguments)
-            content = fineweb_edu_searcher.fetch_content(req.doc_id)
-            if content:
-                return [TextContent(type="text", text=str(content))]
-            return [TextContent(type="text", text="Document not found")]
-
         # Aggregated knowledge tools
-        elif name == "text_search_knowledge":
+        if name == "text_search_knowledge":
             if fineweb_edu_searcher is None:
-                return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
+                return [
+                    TextContent(
+                        type="text",
+                        text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu",
+                    )
+                ]
             req = TextSearchKnowledgeRequest(**arguments)
             from finewiki_mcp.searcher import aggregate_search
-            results = aggregate_search(finewiki_searcher, fineweb_edu_searcher, req.query, total_limit=20)
+
+            results = aggregate_search(
+                finewiki_searcher, fineweb_edu_searcher, req.query, total_limit=20
+            )
             return [TextContent(type="text", text=str(results))]
 
         elif name == "fetch_knowledge":
             req = FetchKnowledgeRequest(**arguments)
             doc_id = req.doc_id
-            
+
             # Parse prefix and fetch from appropriate source
             if doc_id.startswith("wiki:"):
                 wiki_id = int(doc_id[5:])  # Remove 'wiki:' prefix
                 content = finewiki_searcher.fetch_content(wiki_id)
                 if content:
                     return [TextContent(type="text", text=str(content))]
-                return [TextContent(type="text", text=f"Wikipedia document not found: {doc_id}")]
-            
+                return [
+                    TextContent(
+                        type="text", text=f"Wikipedia document not found: {doc_id}"
+                    )
+                ]
+
             elif doc_id.startswith("edu:"):
                 edu_id = doc_id[4:]  # Remove 'edu:' prefix
                 if fineweb_edu_searcher is None:
-                    return [TextContent(type="text", text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu")]
+                    return [
+                        TextContent(
+                            type="text",
+                            text="FineWeb-Edu index not available. Please build the index first with: ./run_finewiki.sh index --dataset fineweb-edu",
+                        )
+                    ]
                 content = fineweb_edu_searcher.fetch_content(edu_id)
                 if content:
                     return [TextContent(type="text", text=str(content))]
-                return [TextContent(type="text", text=f"Educational document not found: {doc_id}")]
-            
+                return [
+                    TextContent(
+                        type="text", text=f"Educational document not found: {doc_id}"
+                    )
+                ]
+
             else:
-                return [TextContent(type="text", text=f"Invalid doc_id format: '{doc_id}'. Expected prefix 'wiki:' or 'edu:'")]
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Invalid doc_id format: '{doc_id}'. Expected prefix 'wiki:' or 'edu:'",
+                    )
+                ]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -315,6 +177,7 @@ if __name__ == "__main__":
 
     if args.mode == "test":
         from finewiki_mcp.tester import run_test
+
         run_test(args.index_dir)
     else:
         server, init_searchers = create_app()

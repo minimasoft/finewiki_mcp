@@ -6,165 +6,164 @@ import resource
 from pathlib import Path
 
 try:
-    from finewiki_mcp.searcher import FineWikiSearcher, FineWebEduSearcher
+    from finewiki_mcp.searcher import (
+        FineWikiSearcher,
+        FineWebEduSearcher,
+        aggregate_search,
+    )
 except ImportError:
-    from searcher import FineWikiSearcher, FineWebEduSearcher
+    from searcher import FineWikiSearcher, FineWebEduSearcher, aggregate_search
 
 
-# Test queries for FineWeb-Edu dataset
-FINEWEB_EDU_QUERIES = [
-    "python tutorial",
+# Test queries for aggregated knowledge search
+KNOWLEDGE_QUERIES = [
     "machine learning",
-    "react documentation",
+    "photosynthesis",
+    "python programming",
 ]
 
 
 def run_test(index_dir: str) -> None:
-    """Run a quick test mode: load index and search for 'Banana' in titles, 
-    'Mozart' in content (FineWiki), and educational queries (FineWeb-Edu)."""
+    """Test the text_search_knowledge and fetch_knowledge MCP tools."""
 
     def get_memory_usage() -> float:
         """Get current memory usage in GB."""
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        # ru_maxrss is in KB on Linux, bytes on macOS
         if sys.platform == "darwin":
             return usage.ru_maxrss / (1024 * 1024 * 1024)
         else:
             return usage.ru_maxrss / (1024 * 1024)
 
-    print(f"Test Mode - Loading index from {index_dir}...")
+    print(f"Test Mode - Testing aggregated knowledge tools")
+    print(f"FineWiki index: {index_dir}")
 
     start_time = time.time()
     finewiki_searcher = FineWikiSearcher(index_dir=index_dir)
     load_time = time.time() - start_time
-    mem_after_load = get_memory_usage()
-    print(f"  Index loaded in {load_time:.3f}s")
-    print(f"  Memory after loading: {mem_after_load:.2f} GB")
+    mem_after_wiki_load = get_memory_usage()
+    print(f"  FineWiki index loaded in {load_time:.3f}s")
+    print(f"  Memory after loading: {mem_after_wiki_load:.2f} GB")
 
-    # Load FineWeb-Edu searcher
+    # Load FineWeb-Edu searcher (required for aggregated search)
     edu_index_path = Path(index_dir).parent / "index_data_fineweb_edu"
     if (edu_index_path / ".index").exists():
         fineweb_edu_searcher = FineWebEduSearcher(index_dir=edu_index_path)
-        print(f"  Loaded FineWeb-Edu index from {edu_index_path}")
+        print(f"  FineWeb-Edu index loaded from {edu_index_path}")
     else:
-        fineweb_edu_searcher = None
-        print(f"  FineWeb-Edu index not found at {edu_index_path}, skipping FineWeb-Edu tests")
+        print(f"\nERROR: FineWeb-Edu index not found at {edu_index_path}")
+        print(
+            "Build the index first with: ./run_finewiki.sh index --dataset fineweb-edu"
+        )
+        return
 
-    # Search for 'Banana' in titles
-    print("\nSearching for 'Banana' in titles...")
-    start_time = time.time()
-    title_results = finewiki_searcher.search_by_title("Banana", limit=5)
-    query_time = time.time() - start_time
-    print(f"  Query completed in {query_time:.3f}s")
-    print(f"  Found {len(title_results)} results:")
-    for r in title_results:
-        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
+    mem_after_load = get_memory_usage()
+    print(f"  Memory after both indices loaded: {mem_after_load:.2f} GB")
 
-    # Search for 'Mozart' in content
-    print("\nSearching for 'Mozart' in content...")
-    start_time = time.time()
-    content_results = finewiki_searcher.search_by_content("Mozart", limit=5)
-    query_time = time.time() - start_time
-    print(f"  Query completed in {query_time:.3f}s")
-    print(f"  Found {len(content_results)} results:")
-    for r in content_results:
-        print(f"    - ID: {r['id']}, Title: {r['title']}, Score: {r['score']:.4f}")
+    # Test aggregated search and fetch for each query
+    print("\n" + "=" * 70)
+    print("Testing text_search_knowledge + fetch_knowledge tools")
+    print("=" * 70)
 
-    # Fetch full content of ALL Banana results
-    if title_results:
-        print("\nFetching full content of all 'Banana' results...")
+    all_fetch_times = []
+
+    for query in KNOWLEDGE_QUERIES:
+        print(f"\n--- Query: '{query}' ---")
+
+        # Test aggregate_search (used by text_search_knowledge tool)
+        start_time = time.time()
+        results = aggregate_search(
+            finewiki_searcher, fineweb_edu_searcher, query, total_limit=20
+        )
+        search_time = time.time() - start_time
+
+        print(f"  Search completed in {search_time:.3f}s")
+
+        # Count wiki vs edu results
+        wiki_count = sum(1 for r in results if r["id"].startswith("wiki:"))
+        edu_count = sum(1 for r in results if r["id"].startswith("edu:"))
+        print(
+            f"  Found {len(results)} total results ({wiki_count} Wikipedia, {edu_count} Educational)"
+        )
+
+        # Show top 3 results
+        print(f"  Top results:")
+        for i, r in enumerate(results[:3]):
+            title_preview = (
+                (r["title"][:50] + "...") if len(r["title"]) > 50 else r["title"]
+            )
+            print(
+                f"    {i + 1}. [{r['id'].split(':')[0]}] {title_preview} (score: {r['score']:.4f})"
+            )
+
+        # Fetch first result from each source type (if available)
+        fetch_targets = []
+        for r in results:
+            if r["id"].startswith("wiki:") and not any(
+                t[0] == "wiki" for t in fetch_targets
+            ):
+                fetch_targets.append(("wiki", r))
+            elif r["id"].startswith("edu:") and not any(
+                t[0] == "edu" for t in fetch_targets
+            ):
+                fetch_targets.append(("edu", r))
+            if len(fetch_targets) == 2:
+                break
+
+        print(f"\n  Fetching content for first result from each source:")
         fetch_times = []
-        for i, result in enumerate(title_results):
+
+        for source_type, result in fetch_targets:
+            doc_id = result["id"]
             start_time = time.time()
-            content = finewiki_searcher.fetch_content(result["id"])
+
+            # Simulate the fetch_knowledge tool logic
+            if doc_id.startswith("wiki:"):
+                wiki_id = int(doc_id[5:])
+                content = finewiki_searcher.fetch_content(wiki_id)
+                source_name = "Wikipedia"
+            else:  # edu:
+                edu_id = doc_id[4:]
+                content = fineweb_edu_searcher.fetch_content(edu_id)
+                source_name = "Educational"
+
             elapsed = time.time() - start_time
             fetch_times.append(elapsed)
+            all_fetch_times.append(elapsed)
 
             if content:
-                print(f"  Result {i+1}: Fetch completed in {elapsed:.3f}s")
-                print(f"    Title: {content['title']}")
-                print(f"    Content length: {len(content['content'])} characters")
-                preview = content["content"][:200].replace("\n", " ")
+                print(f"\n  [{source_name}] Fetch completed in {elapsed:.3f}s")
+                print(f"    ID: {doc_id}")
+
+                if source_type == "wiki":
+                    print(f"    Title: {content.get('title', 'N/A')}")
+                    content_text = content.get("content", "")
+                else:
+                    url = content.get("url", "N/A")
+                    print(f"    URL: {url}")
+                    content_text = content.get("text", "")
+
+                print(f"    Content length: {len(content_text)} characters")
+                preview = content_text[:150].replace("\n", " ")
                 print(f"    Preview: {preview}...")
             else:
-                print(f"  Result {i+1}: Document not found")
+                print(f"\n  [{source_name}] Document not found: {doc_id}")
 
-        avg_fetch_time = sum(fetch_times) / len(fetch_times)
         total_fetch_time = sum(fetch_times)
-        mem_after_fetch = get_memory_usage()
-        print(f"\n  Total fetch time for {len(title_results)} results: {total_fetch_time:.3f}s")
-        print(f"  Average fetch time per result: {avg_fetch_time*1000:.1f}ms")
-        print(f"  Memory after fetching: {mem_after_fetch:.2f} GB")
+        print(f"\n  Total fetch time for this query: {total_fetch_time:.3f}s")
+        print(
+            f"  Average per document: {(total_fetch_time / len(fetch_times)) * 1000:.1f}ms"
+        )
 
-    # Fetch full content of ALL Mozart results
-    if content_results:
-        print("\nFetching full content of all 'Mozart' results...")
-        fetch_times = []
-        for i, result in enumerate(content_results):
-            start_time = time.time()
-            content = finewiki_searcher.fetch_content(result["id"])
-            elapsed = time.time() - start_time
-            fetch_times.append(elapsed)
+    # Summary statistics
+    mem_final = get_memory_usage()
 
-            if content:
-                print(f"  Result {i+1}: Fetch completed in {elapsed:.3f}s")
-                print(f"    Title: {content['title']}")
-                print(f"    Content length: {len(content['content'])} characters")
-                preview = content["content"][:200].replace("\n", " ")
-                print(f"    Preview: {preview}...")
-            else:
-                print(f"  Result {i+1}: Document not found")
-
-        avg_fetch_time = sum(fetch_times) / len(fetch_times)
-        total_fetch_time = sum(fetch_times)
-        mem_after_all = get_memory_usage()
-        print(f"\n  Total fetch time for {len(content_results)} results: {total_fetch_time:.3f}s")
-        print(f"  Average fetch time per result: {avg_fetch_time*1000:.1f}ms")
-        print(f"  Memory after fetching: {mem_after_all:.2f} GB")
-
-    # FineWeb-Edu tests
-    if fineweb_edu_searcher:
-        print("\n" + "=" * 60)
-        print("FineWeb-Edu Tests")
-        print("=" * 60)
-
-        for query in FINEWEB_EDU_QUERIES:
-            print(f"\nSearching for '{query}' in text...")
-            start_time = time.time()
-            text_results = fineweb_edu_searcher.search_by_text(query, limit=5)
-            query_time = time.time() - start_time
-            print(f"  Query completed in {query_time:.3f}s")
-            print(f"  Found {len(text_results)} results:")
-            for r in text_results:
-                text_preview = (r['text_preview'][:40] + "...") if len(r['text_preview']) > 40 else r['text_preview']
-                print(f"    - ID: {r['id']}, Preview: {text_preview}, Score: {r['score']:.4f}")
-
-            # Fetch full content of all results
-            if text_results:
-                print(f"\nFetching full content of all '{query}' results...")
-                fetch_times = []
-                for i, result in enumerate(text_results):
-                    start_time = time.time()
-                    content = fineweb_edu_searcher.fetch_content(result["id"])
-                    elapsed = time.time() - start_time
-                    fetch_times.append(elapsed)
-
-                    if content:
-                        print(f"  Result {i+1}: Fetch completed in {elapsed:.3f}s")
-                        print(f"    ID: {content['id']}")
-                        print(f"    URL: {content.get('url', 'N/A')}")
-                        print(f"    Text length: {len(content.get('text', ''))} characters")
-                        preview = content.get("text", "")[:200].replace("\n", " ")
-                        print(f"    Preview: {preview}...")
-                    else:
-                        print(f"  Result {i+1}: Document not found")
-
-                avg_fetch_time = sum(fetch_times) / len(fetch_times)
-                total_fetch_time = sum(fetch_times)
-                print(f"\n  Total fetch time for {len(text_results)} results: {total_fetch_time:.3f}s")
-                print(f"  Average fetch time per result: {avg_fetch_time*1000:.1f}ms")
-
-        mem_after_edu = get_memory_usage()
-        print(f"\n  Memory after FineWeb-Edu tests: {mem_after_edu:.2f} GB")
-
-    print("\nTest completed successfully!")
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print(f"Queries tested: {len(KNOWLEDGE_QUERIES)}")
+    print(f"Total fetches performed: {len(all_fetch_times)}")
+    if all_fetch_times:
+        avg_fetch = (sum(all_fetch_times) / len(all_fetch_times)) * 1000
+        print(f"Average fetch time: {avg_fetch:.1f}ms")
+    print(f"Final memory usage: {mem_final:.2f} GB")
+    print("\n✓ All tests completed successfully!")
